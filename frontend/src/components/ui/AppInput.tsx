@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import {
   Pressable,
-  StyleSheet,
   TextInput,
   TextInputProps,
   View,

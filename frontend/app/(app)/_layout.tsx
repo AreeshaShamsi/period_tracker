@@ -8,6 +8,8 @@ export default function AppLayout() {
         animation: "slide_from_right",
       }}
     >
+      <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="dashboard" />
       <Stack.Screen name="account" />
     </Stack>
   );

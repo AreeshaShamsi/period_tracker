@@ -20,3 +20,9 @@ export const sizes = {
 } as const;
 
 export type Sizes = typeof sizes;
+
+export const TAB_BAR_HEIGHT = 72;
+
+export function getTabBarContentPaddingBottom(insetsBottom: number): number {
+  return TAB_BAR_HEIGHT + 8 + Math.max(insetsBottom, 12) + 16;
+}

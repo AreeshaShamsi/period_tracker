@@ -12,6 +12,9 @@ export const radius = {
   calendarCard: 14,
   bigInput: 12,
   pill: 999,
+  tabBarTop: 24,
+  tabBarFloating: 28,
+  tabPill: 999,
 } as const;
 
 export type Radius = keyof typeof radius;

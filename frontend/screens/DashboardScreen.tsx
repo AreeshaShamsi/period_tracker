@@ -3,6 +3,7 @@ import { Pressable, View } from "react-native";
 import { colors } from "@/theme/colors";
 import { radius } from "@/theme/radius";
 import { spacing } from "@/theme/spacing";
+import { getTabBarContentPaddingBottom } from "@/theme/sizes";
 import { useOnboarding } from "@/state/OnboardingContext";
 import {
   CheckIcon,
@@ -27,6 +28,7 @@ import {
   nextPeriod,
 } from "@/utils/cycle";
 import { formatShortDate, toISO } from "@/utils/date";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export interface DashboardScreenProps {
   onProfile?: () => void;
@@ -111,13 +113,15 @@ export default function DashboardScreen({
   const isPeriodLoggedToday = userLogs.periodDays.includes(toISO(today));
 
   const phasesList = ["menstrual", "follicular", "ovulation", "luteal"];
+  const insets = useSafeAreaInsets();
+  const paddingBottom = getTabBarContentPaddingBottom(insets.bottom);
 
   return (
     <Screen
       scrollable
       paddingHorizontal
       backgroundColor={colors.white}
-      contentContainerStyle={{ paddingBottom: spacing.xxl }}
+      contentContainerStyle={{ paddingBottom }}
     >
       {/* 1. HEADER ROW */}
       <View

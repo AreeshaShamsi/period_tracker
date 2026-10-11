@@ -1,5 +1,4 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import React from "react";
 
 export type IconName =
   | "home"

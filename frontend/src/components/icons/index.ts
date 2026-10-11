@@ -10,3 +10,4 @@ export * from "./DropIcon";
 export * from "./SymptomsIcon";
 export * from "./MoodIcon";
 export * from "./NoteIcon";
+export * from "./TabIcons";

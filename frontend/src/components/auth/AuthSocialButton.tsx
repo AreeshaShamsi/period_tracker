@@ -1,5 +1,4 @@
 import React from "react";
-import { StyleProp, ViewStyle } from "react-native";
 import { Button } from "@/components/ui/Button";
 import { AppleIcon, GoogleIcon, MailIcon } from "./AuthIcons";
 
@@ -10,7 +9,6 @@ export interface AuthSocialButtonProps {
   label?: string;
   onPress: () => void;
   disabled?: boolean;
-  style?: StyleProp<ViewStyle>;
   className?: string;
 }
 
@@ -19,7 +17,6 @@ export const AuthSocialButton: React.FC<AuthSocialButtonProps> = ({
   label,
   onPress,
   disabled = false,
-  style,
   className = "",
 }) => {
   switch (provider) {
@@ -31,7 +28,6 @@ export const AuthSocialButton: React.FC<AuthSocialButtonProps> = ({
           label={label || "Sign in with Apple"}
           onPress={onPress}
           disabled={disabled}
-          style={style}
           className={className}
         />
       );
@@ -44,7 +40,6 @@ export const AuthSocialButton: React.FC<AuthSocialButtonProps> = ({
           label={label || "Continue with Google"}
           onPress={onPress}
           disabled={disabled}
-          style={style}
           className={className}
         />
       );
@@ -57,7 +52,6 @@ export const AuthSocialButton: React.FC<AuthSocialButtonProps> = ({
           label={label || "Continue with Email"}
           onPress={onPress}
           disabled={disabled}
-          style={style}
           className={className}
         />
       );

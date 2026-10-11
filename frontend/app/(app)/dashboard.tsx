@@ -1,19 +1,6 @@
 import React from "react";
-import { Redirect } from "expo-router";
-import { useOnboarding } from "@/state/OnboardingContext";
-import DashboardScreen from "@/screens/DashboardScreen";
+import { Href, Redirect } from "expo-router";
 
 export default function DashboardRoute() {
-  const { onboardingData, isLoaded } = useOnboarding();
-
-  const hasCompletedOnboarding =
-    Boolean(onboardingData?.name) &&
-    Array.isArray(onboardingData?.lastPeriodDays) &&
-    onboardingData.lastPeriodDays.length > 0;
-
-  if (isLoaded && !hasCompletedOnboarding) {
-    return <Redirect href="/onboarding" />;
-  }
-
-  return <DashboardScreen />;
+  return <Redirect href={"/(app)/(tabs)/" as Href} />;
 }

@@ -1,6 +1,5 @@
 import React from "react";
 import { View, ViewStyle } from "react-native";
-import { colors } from "@/theme/colors";
 import { DividerWithLabel } from "@/components/ui/DividerWithLabel";
 
 export interface AuthDividerProps {

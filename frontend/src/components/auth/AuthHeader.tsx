@@ -22,8 +22,6 @@ export const AuthHeader: React.FC<AuthHeaderProps> = ({
   style,
   className = "",
 }) => {
-  const isCentered = align === "center";
-
   return (
     <View style={[{ marginBottom: 28 }, style]} className={className}>
       {onBack && (

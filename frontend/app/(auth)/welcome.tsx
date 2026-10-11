@@ -118,8 +118,8 @@ export default function WelcomeScreen({
         {/* 7. 60px gap */}
         <View style={{ height: spacing.gap60 }} />
 
-        {/* 8. Button stack (12px gap using marginTop), full width */}
-        <View style={{ width: "100%", alignSelf: "stretch" }}>
+        {/* 8. Button stack (12px gap using className mt-3), full width */}
+        <View className="w-full self-stretch">
           {/* TODO: hide Apple button on Android if native Apple Auth is not supported */}
           <Button
             variant="dark"
@@ -127,22 +127,20 @@ export default function WelcomeScreen({
             label="Sign in with Apple"
             onPress={handleApple}
           />
-          <View style={{ marginTop: 12, width: "100%", alignSelf: "stretch" }}>
-            <Button
-              variant="outline"
-              leftIcon={<GoogleIcon size={20} />}
-              label="Continue with Google"
-              onPress={handleGoogle}
-            />
-          </View>
-          <View style={{ marginTop: 12, width: "100%", alignSelf: "stretch" }}>
-            <Button
-              variant="outline"
-              leftIcon={<MailIcon size={22} />}
-              label="Continue with Email"
-              onPress={handleEmail}
-            />
-          </View>
+          <Button
+            variant="outline"
+            className="mt-3"
+            leftIcon={<GoogleIcon size={20} />}
+            label="Continue with Google"
+            onPress={handleGoogle}
+          />
+          <Button
+            variant="outline"
+            className="mt-3"
+            leftIcon={<MailIcon size={22} />}
+            label="Continue with Email"
+            onPress={handleEmail}
+          />
         </View>
 
         {/* 9. 64px gap */}

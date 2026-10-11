@@ -21,6 +21,16 @@ const baseColors = {
   whiteAlpha30: 'rgba(255, 255, 255, 0.3)',
   whiteAlpha85: 'rgba(255, 255, 255, 0.85)',
 
+  // Floating Glassmorphism Tab Bar color tokens
+  tabBarBg: 'transparent',
+  glassBg: 'rgba(255, 255, 255, 0.75)',
+  glassBgAndroid: 'rgba(255, 255, 255, 0.85)',
+  glassBorder: 'rgba(255, 255, 255, 0.6)',
+  tabBarBorder: 'rgba(255, 255, 255, 0.6)',
+  tabInactive: '#8E8E93',
+  tabActive: '#FF5C8A',
+  tabActiveSoft: 'rgba(255, 92, 138, 0.12)',
+
   // Legacy key aliases for backward compatibility
   primaryDark: '#D81B60',
   textMuted: '#AEAEB2',
