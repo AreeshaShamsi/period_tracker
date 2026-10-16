@@ -2,7 +2,8 @@ const { checkConnection } = require('../config/database');
 
 /**
  * Basic API health check
- * GET /api/health
+ * @param {import('fastify').FastifyRequest} request
+ * @param {import('fastify').FastifyReply} reply
  */
 const getHealth = async (request, reply) => {
   return reply.status(200).send({
@@ -13,8 +14,9 @@ const getHealth = async (request, reply) => {
 };
 
 /**
- * PostgreSQL database connectivity health check
- * GET /api/health/db
+ * Database connectivity health check
+ * @param {import('fastify').FastifyRequest} request
+ * @param {import('fastify').FastifyReply} reply
  */
 const getDbHealth = async (request, reply) => {
   try {
@@ -29,13 +31,12 @@ const getDbHealth = async (request, reply) => {
       },
     });
   } catch (error) {
-    // Log the error internally without exposing details to client
-    request.log.error(`[health] Database connectivity check failed: ${error.message}`);
+    request.log.error(error, '[health.controller] Database health check failed');
     return reply.status(503).send({
       status: 'error',
       database: {
         connected: false,
-        message: 'Database service unavailable',
+        error: 'Database connection unavailable',
       },
     });
   }

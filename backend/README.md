@@ -67,37 +67,72 @@ NODE_ENV=development
   npm run start
   ```
 
+- **Run Automated API Test Suite**:
+  ```bash
+  npm run test:api
+  ```
+
+- **Run All Tests (DB connectivity + API suite)**:
+  ```bash
+  npm run test
+  ```
+
 ## 5. API Endpoints
 
-| Method | Endpoint | Description | Success Status |
+### System & Health
+| Method | Endpoint | Description | Auth Required |
 |---|---|---|---|
-| `GET` | `/` | Service root message | 200 OK |
-| `GET` | `/api/health` | Basic API uptime and health check | 200 OK |
-| `GET` | `/api/health/db` | Database connectivity verification | 200 OK (or 503 if unavailable) |
+| `GET` | `/` | Service root message | No |
+| `GET` | `/api/health` | API uptime check | No |
+| `GET` | `/api/health/db` | Database connectivity verification | No |
 
-### Sample Responses
+### Authentication
+| Method | Endpoint | Description | Auth Required |
+|---|---|---|---|
+| `POST` | `/api/auth/signup` | Register new user + default profile transaction | No |
+| `POST` | `/api/auth/login` | Log in and receive JWT token | No |
+| `POST` | `/api/auth/logout` | Server-side token invalidation / logout | Yes |
+| `GET` | `/api/auth/me` | Fetch authenticated user and profile | Yes |
 
-#### `GET /api/health`
-```json
-{
-  "status": "ok",
-  "uptime": 14.52,
-  "timestamp": "2026-10-11T17:20:00.000Z"
-}
-```
+### Profile & Onboarding
+| Method | Endpoint | Description | Auth Required |
+|---|---|---|---|
+| `GET` | `/api/profile` | Get user profile and cycle stats | Yes |
+| `PUT` | `/api/profile` | Update profile fields (cycle length, duration, etc.) | Yes |
+| `GET` | `/api/notifications/preferences` | Notification preferences placeholder (501) | Yes |
+| `PUT` | `/api/notifications/preferences` | Notification preferences placeholder (501) | Yes |
 
-#### `GET /api/health/db`
-```json
-{
-  "status": "ok",
-  "database": {
-    "connected": true,
-    "name": "period_tracker",
-    "user": "postgres",
-    "server_time": "2026-10-11T17:20:00.123Z"
-  }
-}
-```
+### Period Tracking
+| Method | Endpoint | Description | Auth Required |
+|---|---|---|---|
+| `POST` | `/api/periods` | Create a new period record (ongoing or completed) | Yes |
+| `GET` | `/api/periods` | List user periods with pagination (`page`, `limit`, `sort`) | Yes |
+| `GET` | `/api/periods/:id` | Get period by ID including daily flow logs | Yes |
+| `PUT` | `/api/periods/:id` | Update period dates or notes | Yes |
+| `DELETE` | `/api/periods/:id` | Delete period (cascades to daily logs) | Yes |
+
+### Daily Period Flow Logs
+| Method | Endpoint | Description | Auth Required |
+|---|---|---|---|
+| `POST` | `/api/periods/:id/days` | Log daily flow (`light`, `medium`, `heavy`, `very_heavy`) | Yes |
+| `GET` | `/api/periods/:id/days` | List daily flow logs for a period | Yes |
+| `PUT` | `/api/periods/:id/days/:dayLogId` | Update daily flow log | Yes |
+| `DELETE` | `/api/periods/:id/days/:dayLogId` | Delete daily flow log | Yes |
+
+### Symptom Logs
+| Method | Endpoint | Description | Auth Required |
+|---|---|---|---|
+| `POST` | `/api/symptoms` | Log symptom with severity (1-5) and notes | Yes |
+| `GET` | `/api/symptoms` | List symptoms (filters: `start_date`, `end_date`, `symptom_type`) | Yes |
+| `PUT` | `/api/symptoms/:id` | Update symptom log | Yes |
+| `DELETE` | `/api/symptoms/:id` | Delete symptom log | Yes |
+
+### Cycle & Calendar
+| Method | Endpoint | Description | Auth Required |
+|---|---|---|---|
+| `GET` | `/api/cycle` | Get cycle stats, current cycle day, next period estimate | Yes |
+| `GET` | `/api/calendar?month=YYYY-MM` | Month calendar view with periods, flow, symptoms, estimates | Yes |
+
 
 ## 6. Database Schema
 
