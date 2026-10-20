@@ -1,5 +1,7 @@
 export * from "./types";
 export * from "./ChevronLeftIcon";
+export * from "./ChevronRightIcon";
+export * from "./MoreVertIcon";
 export * from "./ArrowLeftIcon";
 export * from "./MailIcon";
 export * from "./LockIcon";

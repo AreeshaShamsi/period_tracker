@@ -76,7 +76,7 @@ function AppContent() {
     return (
       <DashboardScreen
         onProfile={() => console.log("Profile pressed")}
-        onQuickLog={(type) => console.log("Quick log type:", type)}
+        onQuickLog={(type: string) => console.log("Quick log type:", type)}
       />
     );
   }
