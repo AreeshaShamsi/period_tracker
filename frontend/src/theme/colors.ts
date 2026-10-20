@@ -71,6 +71,25 @@ const baseColors = {
     disabled: '#AEAEB2',
     selected: '#FF5C8A',
   },
+
+  phase: {
+    menstruation: '#FF5C8A',
+    follicular: '#4F83CC',
+    ovulation: '#FFB020',
+    luteal: '#8E59B7',
+  },
+
+  nav: {
+    active: '#FF5C8A',
+    inactive: '#8E8E93',
+  },
+
+  recommendation: {
+    nutritionBg: '#FFF4ED',
+    nutritionTint: '#FF8A34',
+    activityBg: '#F0F5FF',
+    activityTint: '#3B82F6',
+  },
 };
 
 const borderObj = Object.assign('#E5E5EA', {
