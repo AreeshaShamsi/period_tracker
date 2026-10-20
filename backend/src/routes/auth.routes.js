@@ -8,6 +8,8 @@ const { authenticate } = require('../middlewares/auth.middleware');
 async function authRoutes(fastify) {
   fastify.post('/auth/signup', authController.signup);
   fastify.post('/auth/login', authController.login);
+  fastify.post('/auth/google', authController.google);
+  fastify.post('/auth/link-google', { preHandler: [authenticate] }, authController.linkGoogle);
   fastify.post('/auth/logout', { preHandler: [authenticate] }, authController.logout);
   fastify.get('/auth/me', { preHandler: [authenticate] }, authController.me);
 }

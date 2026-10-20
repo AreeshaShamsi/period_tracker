@@ -5,9 +5,18 @@ import { colors } from "@/theme/colors";
 import { spacing } from "@/theme/spacing";
 import { useOnboarding } from "@/state/OnboardingContext";
 import { LockIcon, MailIcon } from "@/components/icons";
+import { GoogleIcon } from "@/components/auth";
+import { authService } from "@/services/auth.service";
+import { profileService } from "@/services/profile.service";
+import { useGoogleAuth } from "@/hooks/useGoogleAuth";
+import { loginSchema, getFirstZodError } from "@/schemas/auth.schema";
+import { AuthUser, extractOnboardingStatus } from "@/types/auth";
+import { logAuthDiagnostic } from "@/utils/devAuthLogger";
 import {
   AppText,
   Button,
+  DividerWithLabel,
+  ErrorModal,
   Screen,
   ScreenHeader,
   TextField,
@@ -15,7 +24,7 @@ import {
 
 export interface SignInScreenProps {
   onBack?: () => void;
-  onSignInSuccess?: () => void;
+  onSignInSuccess?: (user?: AuthUser) => void;
   onSignUp?: () => void;
   onForgotPassword?: () => void;
 }
@@ -27,10 +36,90 @@ export default function SignInScreen({
   onForgotPassword,
 }: SignInScreenProps) {
   const router = useRouter();
-  const { onboardingData } = useOnboarding();
+  const { onboardingData, setField } = useOnboarding();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorModal, setErrorModal] = useState<{
+    visible: boolean;
+    title?: string;
+    message: string;
+  }>({
+    visible: false,
+    message: "",
+  });
+
+  const handleErrorDismiss = () => {
+    // Closes only the popup without navigating or altering any form fields or auth state
+    setErrorModal({ visible: false, message: "" });
+  };
+
+  const { signInWithGoogle, isLoading: isGoogleLoading } = useGoogleAuth({
+    onSuccess: async () => {
+      try {
+        const currentUserRes = await authService.getCurrentUser();
+        const user = currentUserRes.data?.user;
+        if (user?.name && !onboardingData.name) {
+          setField("name", user.name);
+        }
+
+        const statusInfo = extractOnboardingStatus(user);
+
+        if (__DEV__) {
+          logAuthDiagnostic({
+            authMethod: "google",
+            hasSessionToken: true,
+            meHttpStatus: 200,
+            responseStructure: {
+              hasProfileObject: statusInfo.hasProfile,
+              onboardingCompletedValue: statusInfo.rawStatus,
+              sourceProperty: statusInfo.sourceProperty,
+            },
+            profileState: statusInfo.profileState,
+            isLocalCacheOverridingBackend: false,
+            navigationGuard: "SignInScreen",
+            redirectDecision: statusInfo.isCompleted ? "/(app)/dashboard" : "/onboarding",
+            decisionReason: statusInfo.isCompleted
+              ? "Existing Google account has onboarding_completed = true"
+              : "Google account has incomplete onboarding",
+          });
+        }
+
+        if (statusInfo.isCompleted) {
+          await profileService.syncUserData(user).catch(() => {});
+          if (onSignInSuccess) {
+            onSignInSuccess(user);
+          } else {
+            router.replace("/(app)/dashboard" as any);
+          }
+        } else {
+          router.replace("/onboarding" as any);
+        }
+      } catch (err) {
+        if (__DEV__) {
+          console.warn("[SignInScreen] Post-Google login user retrieval error:", err);
+        }
+        if (onSignInSuccess) {
+          onSignInSuccess();
+        } else {
+          router.replace("/(app)/dashboard" as any);
+        }
+      }
+    },
+    onError: (msg, details) => {
+      const modalTitle = details?.title || "Sign In Notice";
+      const modalMessage = details?.message || msg;
+      setErrorModal((prev) => {
+        if (prev.visible && prev.message === modalMessage) return prev;
+        return {
+          visible: true,
+          title: modalTitle,
+          message: modalMessage,
+        };
+      });
+    },
+  });
 
   const handleBack = () => {
     if (onBack) {
@@ -41,26 +130,84 @@ export default function SignInScreen({
   };
 
   const handleSignIn = async () => {
+    if (isLoading || isGoogleLoading) return; // Prevent duplicate submissions
+
     setError("");
-    if (!email.trim() || !password) {
-      setError("Please enter your email and password.");
+
+    const validation = loginSchema.safeParse({
+      email,
+      password,
+    });
+
+    if (!validation.success) {
+      const valError = getFirstZodError(validation.error);
+      setError(valError);
       return;
     }
 
-    const hasCompletedOnboarding =
-      Boolean(onboardingData?.name) &&
-      Array.isArray(onboardingData?.lastPeriodDays) &&
-      onboardingData.lastPeriodDays.length > 0;
+    const { email: validEmail, password: validPassword } = validation.data;
 
-    if (!hasCompletedOnboarding) {
-      router.replace("/onboarding" as any);
-      return;
-    }
+    setIsLoading(true);
+    try {
+      const response = await authService.login({
+        email: validEmail,
+        password: validPassword,
+      });
 
-    if (onSignInSuccess) {
-      onSignInSuccess();
-    } else {
-      console.log("Signed in successfully!");
+      const user = response.data?.user;
+      if (user?.name && !onboardingData.name) {
+        setField("name", user.name);
+      }
+
+      const statusInfo = extractOnboardingStatus(user);
+
+      if (__DEV__) {
+        logAuthDiagnostic({
+          authMethod: "email_password",
+          hasSessionToken: true,
+          meHttpStatus: 200,
+          responseStructure: {
+            hasProfileObject: statusInfo.hasProfile,
+            onboardingCompletedValue: statusInfo.rawStatus,
+            sourceProperty: statusInfo.sourceProperty,
+          },
+          profileState: statusInfo.profileState,
+          isLocalCacheOverridingBackend: false,
+          navigationGuard: "SignInScreen",
+          redirectDecision: statusInfo.isCompleted ? "/(app)/dashboard" : "/onboarding",
+          decisionReason: statusInfo.isCompleted
+            ? "User profile has onboarding_completed = true"
+            : "User profile has onboarding_completed = false (requires onboarding)",
+        });
+      }
+
+      if (statusInfo.isCompleted) {
+        await profileService.syncUserData(user).catch(() => {});
+        if (onSignInSuccess) {
+          onSignInSuccess(user);
+        } else {
+          router.replace("/(app)/dashboard" as any);
+        }
+      } else {
+        router.replace("/onboarding" as any);
+      }
+    } catch (err) {
+      const errorDetails = authService.getAuthErrorDetails(
+        err,
+        "Your email or password is incorrect."
+      );
+      setError(errorDetails.message);
+      // Prevent duplicate popups from repeated clicks
+      setErrorModal((prev) => {
+        if (prev.visible && prev.message === errorDetails.message) return prev;
+        return {
+          visible: true,
+          title: errorDetails.title,
+          message: errorDetails.message,
+        };
+      });
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -99,6 +246,7 @@ export default function SignInScreen({
         keyboardType="email-address"
         autoCapitalize="none"
         value={email}
+        editable={!isLoading}
         onChangeText={(text) => {
           setEmail(text);
           if (error) setError("");
@@ -115,6 +263,7 @@ export default function SignInScreen({
         leftIcon={<LockIcon color={colors.inputIcon} size={20} />}
         secureTextEntry
         value={password}
+        editable={!isLoading}
         onChangeText={(text) => {
           setPassword(text);
           if (error) setError("");
@@ -127,6 +276,7 @@ export default function SignInScreen({
         <Pressable
           onPress={onForgotPassword || (() => console.log("Forgot password"))}
           hitSlop={8}
+          disabled={isLoading}
         >
           <AppText variant="bodySmall" weight="600" color={colors.primary}>
             Forgot Password?
@@ -148,7 +298,11 @@ export default function SignInScreen({
         <AppText variant="caption" color={colors.textSecondary}>
           Don{"'"}t have an account?{" "}
         </AppText>
-        <Pressable onPress={onSignUp || (() => console.log("Sign up"))} hitSlop={8}>
+        <Pressable
+          onPress={onSignUp || (() => console.log("Sign up"))}
+          hitSlop={8}
+          disabled={isLoading}
+        >
           <AppText
             variant="caption"
             weight="600"
@@ -163,18 +317,39 @@ export default function SignInScreen({
       {/* 12. Flexible spacer */}
       <View style={{ flex: 1, minHeight: spacing.xl }} />
 
-      {/* 13. Primary Sign In Button */}
+      {/* 13. Primary Sign In & Social Buttons */}
       <View style={{ width: "100%", alignSelf: "stretch" }}>
         <Button
           variant="primary"
           shape="pill"
-          label="Sign In"
+          label={isLoading ? "Signing In..." : "Sign In"}
           onPress={handleSignIn}
+          disabled={isLoading || isGoogleLoading}
+        />
+
+        <View style={{ height: spacing.md }} />
+        <DividerWithLabel label="or" />
+        <View style={{ height: spacing.md }} />
+
+        <Button
+          variant="outline"
+          shape="pill"
+          leftIcon={<GoogleIcon size={20} />}
+          label={isGoogleLoading ? "Signing in..." : "Continue with Google"}
+          onPress={signInWithGoogle}
+          disabled={isLoading || isGoogleLoading}
         />
       </View>
 
       {/* 14. Bottom margin */}
       <View style={{ height: spacing.xl }} />
+
+      <ErrorModal
+        visible={errorModal.visible}
+        title={errorModal.title}
+        message={errorModal.message}
+        onClose={handleErrorDismiss}
+      />
     </Screen>
   );
 }

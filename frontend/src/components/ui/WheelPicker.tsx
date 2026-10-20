@@ -204,13 +204,13 @@ export const WheelPicker: React.FC<WheelPickerProps> = ({
             opacity = 1;
           } else if (distance === 1) {
             variant = "wheelNear";
-            opacity = 1;
+            opacity = 0.7;
           } else if (distance === 2) {
             variant = "wheelMid";
-            opacity = 0.85;
+            opacity = 0.45;
           } else {
             variant = "wheelFar";
-            opacity = 0.6;
+            opacity = 0.25;
           }
 
           return (

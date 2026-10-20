@@ -3,6 +3,7 @@ import { Dimensions, View } from "react-native";
 import { colors } from "@/theme/colors";
 import { spacing } from "@/theme/spacing";
 import { useOnboarding } from "@/state/OnboardingContext";
+import { profileService } from "@/services/profile.service";
 import { AppText, CircularProgress, Screen } from "@/components/ui";
 
 export interface SetupScreenProps {
@@ -10,13 +11,32 @@ export interface SetupScreenProps {
 }
 
 export default function SetupScreen({ onComplete }: SetupScreenProps) {
-  const { onboardingData, setOnboardingData } = useOnboarding();
+  const { onboardingData, setOnboardingData, syncWithServer } = useOnboarding();
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
+    let isCancelled = false;
     let startTime: number | null = null;
-    const duration = 3000;
+    const duration = 2500;
     let animationFrameId: number;
+
+    // Persist onboarding details and initial period records to backend PostgreSQL database
+    const savePromise = profileService
+      .completeOnboarding({
+        name: onboardingData.name,
+        birthYear: onboardingData.birthday?.year,
+        averageCycleLength: onboardingData.cycleLength,
+        averagePeriodDuration: onboardingData.periodLength,
+        lastPeriodDays: onboardingData.lastPeriodDays,
+      })
+      .then(async (res) => {
+        if (syncWithServer) {
+          await syncWithServer(res.user);
+        }
+      })
+      .catch((err) => {
+        console.warn("[SetupScreen] Server persistence note:", err);
+      });
 
     const animate = (timestamp: number) => {
       if (!startTime) startTime = timestamp;
@@ -34,16 +54,19 @@ export default function SetupScreen({ onComplete }: SetupScreenProps) {
         animationFrameId = requestAnimationFrame(animate);
       } else {
         setProgress(1);
-        setTimeout(async () => {
-          await setOnboardingData(onboardingData);
-          onComplete();
-        }, 400);
+        savePromise.finally(async () => {
+          if (!isCancelled) {
+            await setOnboardingData(onboardingData);
+            onComplete();
+          }
+        });
       }
     };
 
     animationFrameId = requestAnimationFrame(animate);
 
     return () => {
+      isCancelled = true;
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
     };
   }, []);
@@ -62,11 +85,7 @@ export default function SetupScreen({ onComplete }: SetupScreenProps) {
             alignItems: "center",
           }}
         >
-          <AppText
-            variant="screenTitle"
-            align="center"
-            style={{ fontSize: 24, lineHeight: 30 }}
-          >
+          <AppText variant="screenTitle" align="center">
             We{"'"}re setting up your{"\n"}personalized calendar...
           </AppText>
         </View>

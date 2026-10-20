@@ -8,7 +8,9 @@
     "dev": "nodemon src/server.js",
     "test:db": "node src/config/database.js",
     "test:api": "node test-api.js",
-    "test": "node src/config/database.js && node test-api.js"
+    "test:cors": "node test-cors.js",
+    "test:google": "node test-google-auth.js",
+    "test": "node src/config/database.js && node test-api.js && node test-cors.js && node test-google-auth.js"
   },
   "keywords": [
     "lunari",
@@ -24,8 +26,10 @@
     "bcryptjs": "^3.0.3",
     "dotenv": "^18.0.7",
     "fastify": "^5.12.5",
+    "google-auth-library": "^11.3.1",
     "jsonwebtoken": "^9.0.3",
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "zod": "3.23.8"
   },
   "devDependencies": {
     "@types/pg": "^8.23.1",

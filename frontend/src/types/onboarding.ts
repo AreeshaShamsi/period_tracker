@@ -13,6 +13,7 @@ export type OnboardingData = {
   cycleLengthMin: number; // irregular, default 26
   cycleLengthMax: number; // irregular, default 28
   lastPeriodDays: string[]; // ISO dates 'YYYY-MM-DD', sorted
+  step?: number; // active unfinished step index for smooth resumption
 };
 
 export type UserLogs = {

@@ -24,3 +24,4 @@ export * from "./CircularProgress";
 export * from "./Card";
 export * from "./SectionTitle";
 export * from "./CalendarMonth";
+export * from "./ErrorModal";

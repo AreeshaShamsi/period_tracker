@@ -8,6 +8,8 @@ const { authenticate } = require('../middlewares/auth.middleware');
 async function profileRoutes(fastify) {
   fastify.get('/profile', { preHandler: [authenticate] }, profileController.getProfile);
   fastify.put('/profile', { preHandler: [authenticate] }, profileController.updateProfile);
+  fastify.patch('/profile', { preHandler: [authenticate] }, profileController.updateProfile);
+  fastify.post('/profile/onboarding', { preHandler: [authenticate] }, profileController.completeOnboarding);
 
   fastify.get(
     '/notifications/preferences',

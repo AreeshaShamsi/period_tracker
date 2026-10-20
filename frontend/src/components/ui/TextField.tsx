@@ -24,6 +24,7 @@ export interface TextFieldProps {
   autoCapitalize?: "none" | "sentences" | "words" | "characters";
   error?: string;
   style?: ViewStyle;
+  editable?: boolean;
 }
 
 export const TextField: React.FC<TextFieldProps> = ({
@@ -37,6 +38,7 @@ export const TextField: React.FC<TextFieldProps> = ({
   autoCapitalize = "none",
   error,
   style,
+  editable = true,
 }) => {
   const [isFocused, setIsFocused] = useState(false);
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
@@ -72,6 +74,7 @@ export const TextField: React.FC<TextFieldProps> = ({
           secureTextEntry={showSecureText}
           keyboardType={keyboardType}
           autoCapitalize={autoCapitalize}
+          editable={editable}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
           style={[

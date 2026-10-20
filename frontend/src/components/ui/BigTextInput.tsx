@@ -26,7 +26,7 @@ export const BigTextInput: React.FC<BigTextInputProps> = ({
     <View
       style={{
         width: "100%",
-        height: 72,
+        height: 64,
         borderRadius: radius.bigInput,
         backgroundColor: isFocused ? colors.white : colors.inputBg,
         borderWidth: 1,
@@ -51,7 +51,10 @@ export const BigTextInput: React.FC<BigTextInputProps> = ({
           {
             width: "100%",
             textAlign: "center",
-            padding: 0,
+            textAlignVertical: "center",
+            paddingVertical: 0,
+            paddingHorizontal: 0,
+            includeFontPadding: false,
           },
           webStyle,
         ]}

@@ -2,6 +2,10 @@ import React, { useEffect, useState } from "react";
 import { View } from "react-native";
 import { colors } from "@/theme/colors";
 import { useOnboarding } from "@/state/OnboardingContext";
+import { getAuthToken, getAuthUser } from "@/lib/storage";
+import { authService } from "@/services/auth.service";
+import { AuthUser, extractOnboardingStatus } from "@/types/auth";
+import { logAuthDiagnostic } from "@/utils/devAuthLogger";
 import WelcomeScreen from "./app/(auth)/welcome";
 import CreateAccountScreen from "./screens/CreateAccountScreen";
 import SignInScreen from "./screens/SignInScreen";
@@ -18,18 +22,51 @@ export type RouteState =
   | "dashboard";
 
 function AppContent() {
-  const { onboardingData, isLoadingStorage } = useOnboarding();
+  const { isLoadingStorage } = useOnboarding();
   const [route, setRoute] = useState<RouteState | null>(null);
 
   useEffect(() => {
-    if (!isLoadingStorage) {
-      if (onboardingData.name && onboardingData.lastPeriodDays.length > 0) {
-        setRoute("dashboard");
-      } else {
-        setRoute("welcome");
+    let isMounted = true;
+
+    async function evaluateAppRoute() {
+      if (isLoadingStorage) return;
+
+      try {
+        const token = await getAuthToken();
+        if (!token) {
+          if (isMounted) setRoute("welcome");
+          return;
+        }
+
+        let user: AuthUser | undefined;
+        try {
+          const res = await authService.getCurrentUser();
+          user = res.data?.user;
+        } catch {
+          const cached = await getAuthUser();
+          user = cached || undefined;
+        }
+
+        if (!user) {
+          if (isMounted) setRoute("welcome");
+          return;
+        }
+
+        const statusInfo = extractOnboardingStatus(user);
+        if (isMounted) {
+          setRoute(statusInfo.isCompleted ? "dashboard" : "onboarding");
+        }
+      } catch (err) {
+        if (isMounted) setRoute("welcome");
       }
     }
-  }, [isLoadingStorage, onboardingData]);
+
+    evaluateAppRoute();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isLoadingStorage]);
 
   if (isLoadingStorage || route === null) {
     return <View style={{ flex: 1, backgroundColor: colors.white }} />;
@@ -61,7 +98,10 @@ function AppContent() {
     return (
       <SignInScreen
         onBack={() => setRoute("welcome")}
-        onSignInSuccess={() => setRoute("dashboard")}
+        onSignInSuccess={(user) => {
+          const statusInfo = extractOnboardingStatus(user);
+          setRoute(statusInfo.isCompleted ? "dashboard" : "onboarding");
+        }}
         onSignUp={() => setRoute("createAccount")}
         onForgotPassword={() => console.log("Forgot password pressed")}
       />
@@ -83,6 +123,12 @@ function AppContent() {
     <WelcomeScreen
       onEmail={() => setRoute("createAccount")}
       onSignIn={() => setRoute("signIn")}
+      onGoogleSuccess={() => {
+        getAuthUser().then((user) => {
+          const statusInfo = extractOnboardingStatus(user);
+          setRoute(statusInfo.isCompleted ? "dashboard" : "onboarding");
+        });
+      }}
     />
   );
 }

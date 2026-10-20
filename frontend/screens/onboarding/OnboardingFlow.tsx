@@ -40,7 +40,28 @@ export default function OnboardingFlow({
   onFinishOnboarding,
 }: OnboardingFlowProps) {
   const { onboardingData, setField, setOnboardingData } = useOnboarding();
-  const [stepIndex, setStepIndex] = useState(0);
+
+  // Smartly resume on the unfinished step if onboarding is in progress
+  const initialStep = React.useMemo(() => {
+    if (
+      typeof onboardingData.step === "number" &&
+      onboardingData.step >= 0 &&
+      onboardingData.step < STEPS.length
+    ) {
+      return onboardingData.step;
+    }
+    if (!onboardingData.name || onboardingData.name.trim() === "") {
+      return 0;
+    }
+    return 1;
+  }, [onboardingData.step, onboardingData.name]);
+
+  const [stepIndex, setStepIndex] = useState(initialStep);
+
+  const goToStep = (nextIdx: number) => {
+    setStepIndex(nextIdx);
+    setField("step", nextIdx);
+  };
 
   const currentStep = STEPS[stepIndex];
   const currentYear = new Date().getFullYear();
@@ -169,7 +190,7 @@ export default function OnboardingFlow({
     if (stepIndex === 0) {
       onBackToAccount();
     } else {
-      setStepIndex((prev) => prev - 1);
+      goToStep(stepIndex - 1);
     }
   };
 
@@ -178,19 +199,19 @@ export default function OnboardingFlow({
     if (currentStep.id === "name") {
       const trimmed = name.trim();
       setField("name", trimmed);
-      setStepIndex(1);
+      goToStep(1);
     } else if (currentStep.id === "birthday") {
       setField("birthday", { month: bMonth, day: bDay, year: bYear });
-      setStepIndex(2); // Goes to step 5 (periodLength)
+      goToStep(2); // Goes to step 5 (periodLength)
     } else if (currentStep.id === "periodLength") {
       setField("periodLength", periodLen);
-      setStepIndex(3); // Goes to step 6 (cycleLength)
+      goToStep(3); // Goes to step 6 (cycleLength)
     } else if (currentStep.id === "cycleLength") {
       setField("cycleType", cycleType);
       setField("cycleLength", cycleLen);
       setField("cycleLengthMin", cycleMin);
       setField("cycleLengthMax", cycleMax);
-      setStepIndex(4); // Goes to step 7 (lastPeriod)
+      goToStep(4); // Goes to step 7 (lastPeriod)
     } else if (currentStep.id === "lastPeriod") {
       const sortedDays = Array.from(selectedCalendarDays).sort();
       const updatedData = {
@@ -203,6 +224,7 @@ export default function OnboardingFlow({
         cycleLengthMin: cycleMin,
         cycleLengthMax: cycleMax,
         lastPeriodDays: sortedDays,
+        step: 4,
       };
       await setOnboardingData(updatedData);
       onFinishOnboarding();

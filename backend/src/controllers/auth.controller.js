@@ -1,13 +1,22 @@
 const { pool, query } = require('../config/database');
 const { hashPassword, comparePassword, generateToken, revokeToken } = require('../services/auth.service');
 const { AppError, mapDatabaseError } = require('../utils/error.utils');
-
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const { validateSignup, validateLogin } = require('../validators/auth.validator');
+const { verifyGoogleIdToken, authenticateGoogleUser, linkGoogleAccount } = require('../services/googleAuth.service');
 
 /**
  * Register a new user with default profile in a single transaction
  */
 async function signup(request, reply) {
+  // 1. Zod Schema Validation
+  const validation = validateSignup(request.body || {});
+  if (!validation.success) {
+    return reply.status(400).send({
+      status: 'error',
+      message: validation.message,
+    });
+  }
+
   const {
     name,
     email,
@@ -15,71 +24,13 @@ async function signup(request, reply) {
     birthYear,
     averageCycleLength,
     averagePeriodDuration,
-  } = request.body || {};
-
-  // 1. Validation
-  if (!name || typeof name !== 'string' || name.trim().length === 0) {
-    return reply.status(400).send({
-      status: 'error',
-      message: 'Name is required and must be a valid string.',
-    });
-  }
-  if (name.trim().length > 100) {
-    return reply.status(400).send({
-      status: 'error',
-      message: 'Name cannot exceed 100 characters.',
-    });
-  }
-
-  if (!email || typeof email !== 'string' || !EMAIL_REGEX.test(email.trim())) {
-    return reply.status(400).send({
-      status: 'error',
-      message: 'A valid email address is required.',
-    });
-  }
-
-  if (!password || typeof password !== 'string' || password.length < 6) {
-    return reply.status(400).send({
-      status: 'error',
-      message: 'Password is required and must be at least 6 characters long.',
-    });
-  }
-
-  if (birthYear !== undefined && birthYear !== null) {
-    const by = Number(birthYear);
-    if (!Number.isInteger(by) || by < 1900 || by > 2100) {
-      return reply.status(400).send({
-        status: 'error',
-        message: 'Birth year must be an integer between 1900 and 2100.',
-      });
-    }
-  }
-
-  if (averageCycleLength !== undefined && averageCycleLength !== null) {
-    const acl = Number(averageCycleLength);
-    if (!Number.isInteger(acl) || acl < 15 || acl > 90) {
-      return reply.status(400).send({
-        status: 'error',
-        message: 'Average cycle length must be an integer between 15 and 90 days.',
-      });
-    }
-  }
-
-  if (averagePeriodDuration !== undefined && averagePeriodDuration !== null) {
-    const apd = Number(averagePeriodDuration);
-    if (!Number.isInteger(apd) || apd < 1 || apd > 15) {
-      return reply.status(400).send({
-        status: 'error',
-        message: 'Average period duration must be an integer between 1 and 15 days.',
-      });
-    }
-  }
+  } = validation.data;
 
   const normalizedEmail = email.trim().toLowerCase();
   const trimmedName = name.trim();
 
-  // 2. Pre-check for duplicate email
-  const existing = await query('SELECT id FROM users WHERE email = $1', [normalizedEmail]);
+  // 2. Pre-check for duplicate email (case-insensitive)
+  const existing = await query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [normalizedEmail]);
   if (existing.rows.length > 0) {
     return reply.status(409).send({
       status: 'error',
@@ -126,6 +77,7 @@ async function signup(request, reply) {
 
     const userProfile = profileResult.rows[0];
     const token = generateToken({ userId: String(newUser.id), email: newUser.email });
+    const isOnboarded = Boolean(userProfile.onboarding_completed);
 
     return reply.status(201).send({
       status: 'success',
@@ -136,12 +88,18 @@ async function signup(request, reply) {
           id: String(newUser.id),
           name: newUser.name,
           email: newUser.email,
+          has_password: true,
+          is_google_linked: false,
+          auth_providers: ['email'],
           created_at: newUser.created_at,
+          onboarding_completed: isOnboarded,
+          onboardingCompleted: isOnboarded,
           profile: {
             birth_year: userProfile.birth_year,
             average_cycle_length: userProfile.average_cycle_length,
             average_period_duration: userProfile.average_period_duration,
-            onboarding_completed: userProfile.onboarding_completed,
+            onboarding_completed: isOnboarded,
+            onboardingCompleted: isOnboarded,
           },
         },
       },
@@ -165,20 +123,21 @@ async function signup(request, reply) {
  * Authenticate user with email and password
  */
 async function login(request, reply) {
-  const { email, password } = request.body || {};
-
-  if (!email || !password || typeof email !== 'string' || typeof password !== 'string') {
+  // 1. Zod Schema Validation
+  const validation = validateLogin(request.body || {});
+  if (!validation.success) {
     return reply.status(400).send({
       status: 'error',
-      message: 'Email and password are required.',
+      message: validation.message,
     });
   }
 
+  const { email, password } = validation.data;
   const normalizedEmail = email.trim().toLowerCase();
 
   try {
     const userResult = await query(
-      `SELECT u.id, u.name, u.email, u.password_hash, u.created_at,
+      `SELECT u.id, u.name, u.email, u.password_hash, u.google_id, u.created_at,
               p.birth_year, p.average_cycle_length, p.average_period_duration, p.onboarding_completed
        FROM users u
        LEFT JOIN user_profiles p ON u.id = p.user_id
@@ -194,6 +153,15 @@ async function login(request, reply) {
     }
 
     const user = userResult.rows[0];
+
+    if (!user.password_hash) {
+      return reply.status(400).send({
+        status: 'error',
+        code: 'GOOGLE_SIGN_IN_REQUIRED',
+        message: 'This account was registered using Google Sign-In. Please sign in with Google.',
+      });
+    }
+
     const passwordMatch = await comparePassword(password, user.password_hash);
 
     if (!passwordMatch) {
@@ -204,6 +172,7 @@ async function login(request, reply) {
     }
 
     const token = generateToken({ userId: String(user.id), email: user.email });
+    const isOnboarded = Boolean(user.onboarding_completed);
 
     return reply.status(200).send({
       status: 'success',
@@ -214,12 +183,18 @@ async function login(request, reply) {
           id: String(user.id),
           name: user.name,
           email: user.email,
+          has_password: true,
+          is_google_linked: Boolean(user.google_id),
+          auth_providers: user.google_id ? ['email', 'google'] : ['email'],
           created_at: user.created_at,
+          onboarding_completed: isOnboarded,
+          onboardingCompleted: isOnboarded,
           profile: {
             birth_year: user.birth_year,
             average_cycle_length: user.average_cycle_length,
             average_period_duration: user.average_period_duration,
-            onboarding_completed: user.onboarding_completed,
+            onboarding_completed: isOnboarded,
+            onboardingCompleted: isOnboarded,
           },
         },
       },
@@ -253,7 +228,7 @@ async function logout(request, reply) {
 async function me(request, reply) {
   try {
     const result = await query(
-      `SELECT u.id, u.name, u.email, u.created_at, u.updated_at,
+      `SELECT u.id, u.name, u.email, u.password_hash, u.google_id, u.created_at, u.updated_at,
               p.birth_year, p.average_cycle_length, p.average_period_duration, p.onboarding_completed
        FROM users u
        LEFT JOIN user_profiles p ON u.id = p.user_id
@@ -269,6 +244,13 @@ async function me(request, reply) {
     }
 
     const user = result.rows[0];
+    const hasPassword = Boolean(user.password_hash);
+    const isGoogleLinked = Boolean(user.google_id);
+    const authProviders = [];
+    if (hasPassword) authProviders.push('email');
+    if (isGoogleLinked) authProviders.push('google');
+
+    const isOnboarded = Boolean(user.onboarding_completed);
 
     return reply.status(200).send({
       status: 'success',
@@ -277,13 +259,19 @@ async function me(request, reply) {
           id: String(user.id),
           name: user.name,
           email: user.email,
+          has_password: hasPassword,
+          is_google_linked: isGoogleLinked,
+          auth_providers: authProviders,
           created_at: user.created_at,
           updated_at: user.updated_at,
+          onboarding_completed: isOnboarded,
+          onboardingCompleted: isOnboarded,
           profile: {
             birth_year: user.birth_year,
             average_cycle_length: user.average_cycle_length,
             average_period_duration: user.average_period_duration,
-            onboarding_completed: user.onboarding_completed,
+            onboarding_completed: isOnboarded,
+            onboardingCompleted: isOnboarded,
           },
         },
       },
@@ -297,9 +285,86 @@ async function me(request, reply) {
   }
 }
 
+/**
+ * Authenticate user with Google ID token
+ */
+async function google(request, reply) {
+  const { idToken, token } = request.body || {};
+  const tokenToVerify = idToken || token;
+
+  if (!tokenToVerify || typeof tokenToVerify !== 'string' || tokenToVerify.trim() === '') {
+    return reply.status(401).send({
+      status: 'error',
+      message: 'Google ID token is required.',
+    });
+  }
+
+  try {
+    const googleProfile = await verifyGoogleIdToken(tokenToVerify);
+    const authResult = await authenticateGoogleUser(googleProfile);
+
+    return reply.status(200).send({
+      status: 'success',
+      message: 'Authenticated with Google successfully.',
+      data: authResult,
+    });
+  } catch (err) {
+    const statusCode = err.statusCode || 500;
+    const message = err.message || 'Google authentication failed.';
+    request.log.error(err, '[auth.controller] Google auth failure');
+    return reply.status(statusCode).send({
+      status: 'error',
+      ...(err.code ? { code: err.code } : {}),
+      message,
+    });
+  }
+}
+
+/**
+ * Securely link Google identity to existing authenticated user account
+ */
+async function linkGoogle(request, reply) {
+  const { idToken, token } = request.body || {};
+  const tokenToVerify = idToken || token;
+
+  if (!tokenToVerify || typeof tokenToVerify !== 'string' || tokenToVerify.trim() === '') {
+    return reply.status(400).send({
+      status: 'error',
+      message: 'Google ID token is required.',
+    });
+  }
+
+  try {
+    const googleProfile = await verifyGoogleIdToken(tokenToVerify);
+    const linkedUser = await linkGoogleAccount({
+      userId: request.user.id,
+      googleProfile,
+    });
+
+    return reply.status(200).send({
+      status: 'success',
+      message: 'Google account linked successfully.',
+      data: {
+        user: linkedUser,
+      },
+    });
+  } catch (err) {
+    const statusCode = err.statusCode || 500;
+    const message = err.message || 'Failed to link Google account.';
+    request.log.error(err, '[auth.controller] Google account linking failure');
+    return reply.status(statusCode).send({
+      status: 'error',
+      ...(err.code ? { code: err.code } : {}),
+      message,
+    });
+  }
+}
+
 module.exports = {
   signup,
   login,
+  google,
+  linkGoogle,
   logout,
   me,
 };

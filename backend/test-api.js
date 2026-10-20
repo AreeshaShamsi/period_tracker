@@ -32,10 +32,11 @@ async function runTests() {
 
   const userAlphaEmail = 'test_user_alpha_phase1@example.com';
   const userBetaEmail = 'test_user_beta_phase1@example.com';
+  const userGammaEmail = 'test_user_gamma_onboarding@example.com';
 
   try {
     // 0. Clean up any previous test runs for test users (preserving User 1 intact)
-    await query('DELETE FROM users WHERE email IN ($1, $2)', [userAlphaEmail, userBetaEmail]);
+    await query('DELETE FROM users WHERE email IN ($1, $2, $3)', [userAlphaEmail, userBetaEmail, userGammaEmail]);
 
     // Verify sample user 1 exists before testing
     const sampleUserCheck = await query('SELECT id, email FROM users WHERE id = 1');
@@ -201,6 +202,93 @@ async function runTests() {
       headers: { authorization: `Bearer ${tokenAlpha}` },
     });
     assert(notifGet.statusCode === 501, 'GET /api/notifications/preferences returns 501 Not Implemented per scope');
+
+    // --- Onboarding Completion Flow ---
+    const gammaSignup = await app.inject({
+      method: 'POST',
+      url: '/api/auth/signup',
+      payload: {
+        name: 'Gamma Initial',
+        email: userGammaEmail,
+        password: 'Password123!',
+      },
+    });
+    assert(gammaSignup.statusCode === 201, 'Signup creates Gamma user');
+    const gammaData = JSON.parse(gammaSignup.payload).data;
+    const tokenGamma = gammaData.token;
+    assert(gammaData.user.profile.onboarding_completed === false, 'New user has onboarding_completed = false');
+
+    // Reject onboarding with invalid constraints (e.g. cycle length < 15)
+    const invalidOnboarding = await app.inject({
+      method: 'POST',
+      url: '/api/profile/onboarding',
+      headers: { authorization: `Bearer ${tokenGamma}` },
+      payload: {
+        name: 'Gamma Onboarded',
+        averageCycleLength: 10,
+      },
+    });
+    assert(invalidOnboarding.statusCode === 400, 'POST /api/profile/onboarding rejects invalid cycle length with 400');
+
+    // Complete onboarding with full data
+    const completeOnboardingRes = await app.inject({
+      method: 'POST',
+      url: '/api/profile/onboarding',
+      headers: { authorization: `Bearer ${tokenGamma}` },
+      payload: {
+        name: 'Gamma Full Onboarded',
+        birthYear: 1999,
+        averageCycleLength: 28,
+        averagePeriodDuration: 5,
+        lastPeriodDays: ['2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04', '2026-09-05'],
+      },
+    });
+    assert(completeOnboardingRes.statusCode === 200, 'POST /api/profile/onboarding returns 200 OK');
+    const onboardedProfile = JSON.parse(completeOnboardingRes.payload).data.profile;
+    assert(onboardedProfile.name === 'Gamma Full Onboarded', 'User name updated on onboarding completion');
+    assert(onboardedProfile.onboarding_completed === true, 'Profile onboarding_completed set to true');
+    assert(onboardedProfile.birth_year === 1999, 'birth_year saved');
+    assert(onboardedProfile.average_cycle_length === 28, 'average_cycle_length saved');
+
+    // Verify DB records for periods & period_days
+    const gammaPeriods = await query('SELECT * FROM periods WHERE user_id = $1', [gammaData.user.id]);
+    assert(gammaPeriods.rows.length === 1, 'Initial period record created in periods table');
+    assert(String(gammaPeriods.rows[0].start_date).slice(0, 10) === '2026-09-01', 'Period start_date matches first day');
+    assert(String(gammaPeriods.rows[0].end_date).slice(0, 10) === '2026-09-05', 'Period end_date matches last day');
+
+    const gammaPeriodDays = await query('SELECT * FROM period_day_logs WHERE period_id = $1 ORDER BY log_date ASC', [gammaPeriods.rows[0].id]);
+    assert(gammaPeriodDays.rows.length === 5, '5 period_day_logs records created');
+
+    // Idempotent test: Call onboarding completion again without error
+    const duplicateOnboarding = await app.inject({
+      method: 'POST',
+      url: '/api/profile/onboarding',
+      headers: { authorization: `Bearer ${tokenGamma}` },
+      payload: {
+        name: 'Gamma Full Onboarded',
+        birthYear: 1999,
+        averageCycleLength: 28,
+        averagePeriodDuration: 5,
+        lastPeriodDays: ['2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04', '2026-09-05'],
+      },
+    });
+    assert(duplicateOnboarding.statusCode === 200, 'POST /api/profile/onboarding handles repeat calls gracefully (idempotent)');
+
+    // Test PATCH /api/profile
+    const patchProfileRes = await app.inject({
+      method: 'PATCH',
+      url: '/api/profile',
+      headers: { authorization: `Bearer ${tokenGamma}` },
+      payload: {
+        name: 'Gamma Patched',
+        average_cycle_length: 31,
+      },
+    });
+    assert(patchProfileRes.statusCode === 200, 'PATCH /api/profile updates profile');
+    const patchedProfile = JSON.parse(patchProfileRes.payload).data.profile;
+    assert(patchedProfile.name === 'Gamma Patched', 'PATCH /api/profile updated name');
+    assert(patchedProfile.average_cycle_length === 31, 'PATCH /api/profile updated average_cycle_length');
+    assert(patchedProfile.onboarding_completed === true, 'onboarding_completed remains true');
 
     // -------------------------------------------------------------
     // SECTION 4: Period APIs
@@ -553,7 +641,7 @@ async function runTests() {
     failedTests++;
   } finally {
     // Clean up temporary test accounts created during test
-    await query('DELETE FROM users WHERE email IN ($1, $2)', [userAlphaEmail, userBetaEmail]).catch(() => {});
+    await query('DELETE FROM users WHERE email IN ($1, $2, $3)', [userAlphaEmail, userBetaEmail, userGammaEmail]).catch(() => {});
     await app.close();
     await closePool();
 

@@ -1,5 +1,6 @@
 import React, {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useReducer,
@@ -15,6 +16,9 @@ import {
   saveOnboarding,
 } from "@/lib/storage";
 
+import { profileService } from "@/services/profile.service";
+import { AuthUser } from "@/types/auth";
+
 export const DEFAULT_ONBOARDING_DATA: OnboardingData = {
   name: "",
   birthday: { month: 12, day: 25, year: 1995 },
@@ -24,6 +28,7 @@ export const DEFAULT_ONBOARDING_DATA: OnboardingData = {
   cycleLengthMin: 26,
   cycleLengthMax: 28,
   lastPeriodDays: [],
+  step: 0,
 };
 
 export const DEFAULT_USER_LOGS: UserLogs = {
@@ -96,6 +101,10 @@ interface OnboardingContextType {
   ) => void;
   setOnboardingData: (data: OnboardingData) => Promise<void>;
   togglePeriodLog: (dateStr: string) => void;
+  syncWithServer: (user?: AuthUser) => Promise<{
+    user: AuthUser;
+    onboardingCompleted: boolean;
+  } | null>;
 }
 
 const OnboardingContext = createContext<OnboardingContextType | undefined>(
@@ -138,6 +147,8 @@ export const OnboardingProvider: React.FC<{ children: React.ReactNode }> = ({
     value: OnboardingData[K]
   ) => {
     dispatch({ type: "SET_FIELD", field, value });
+    const updated = { ...state.onboardingData, [field]: value };
+    saveOnboarding(updated).catch(() => {});
   };
 
   const setOnboardingData = async (data: OnboardingData) => {
@@ -148,6 +159,24 @@ export const OnboardingProvider: React.FC<{ children: React.ReactNode }> = ({
   const togglePeriodLog = (dateStr: string) => {
     dispatch({ type: "TOGGLE_PERIOD_LOG", dateStr });
   };
+
+  const syncWithServer = useCallback(async (user?: AuthUser) => {
+    try {
+      const result = await profileService.syncUserData(user);
+      const savedData = await loadOnboarding();
+      if (savedData) {
+        dispatch({ type: "SET_ONBOARDING_DATA", data: savedData });
+      }
+      const savedLogs = await loadLogs();
+      if (savedLogs) {
+        dispatch({ type: "SET_USER_LOGS", logs: savedLogs });
+      }
+      return result;
+    } catch (err) {
+      console.warn("[OnboardingContext] syncWithServer failed:", err);
+      return null;
+    }
+  }, []);
 
   if (!isLoaded) {
     return <View style={{ flex: 1, backgroundColor: colors.white }} />;
@@ -163,6 +192,7 @@ export const OnboardingProvider: React.FC<{ children: React.ReactNode }> = ({
         setField,
         setOnboardingData,
         togglePeriodLog,
+        syncWithServer,
       }}
     >
       {children}
