@@ -1,0 +1,17 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="36dp"
+    android:height="36dp"
+    android:viewportWidth="36"
+    android:viewportHeight="36">
+    <!-- Pink circular background -->
+    <path
+        android:fillColor="#FFF0F5"
+        android:pathData="M18,18m-18,0a18,18 0,1,1 36,0a18,18 0,1,1 -36,0" />
+    <!-- Lunari crescent / drop petal icon -->
+    <path
+        android:fillColor="#FF4D80"
+        android:pathData="M18,9C15.2,13 13,16.2 13,19.5C13,22.5 15.2,25 18,25C20.8,25 23,22.5 23,19.5C23,16.2 20.8,13 18,9Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M18,15C17.2,17 16,18.5 16,20C16,21.1 16.9,22 18,22C19.1,22 20,21.1 20,20C20,18.5 18.8,17 18,15Z" />
+</vector>

@@ -1,0 +1,25 @@
+<resources>
+    <string name="app_name">Lunari</string>
+    <string name="content_desc_logo">Lunari logo</string>
+    <string name="content_desc_menu">More options</string>
+    <string name="content_desc_period_drop">Period indicator</string>
+    <string name="content_desc_ovulation_icon">Ovulation indicator</string>
+    <string name="content_desc_arrow_right">View all cycle phases</string>
+    
+    <string name="period_label">Period</string>
+    <string name="cycle_day_days">days</string>
+    <string name="ovulation_days_left_format">Ovulation  %1$d days left</string>
+    <string name="edit_period_button">Edit Period</string>
+    <string name="menstrual_cycle_phases_title">Menstrual Cycle Phases</string>
+    
+    <string name="phase_1_name">Menstrual</string>
+    <string name="phase_2_name">Follicular</string>
+    <string name="phase_3_name">Ovulation</string>
+    <string name="phase_4_name">Luteal</string>
+    
+    <string name="nav_home">Home</string>
+    <string name="nav_calendar">Calendar</string>
+    <string name="nav_tracker">Tracker</string>
+    <string name="nav_articles">Articles</string>
+    <string name="nav_account">Account</string>
+</resources>

@@ -24,4 +24,6 @@ yarn-error.*
 *.mobileprovision
 
 /ios
-/android
+/android/build
+/android/.gradle
+/android/app/build
