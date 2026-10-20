@@ -73,10 +73,25 @@ const baseColors = {
   },
 
   phase: {
-    menstruation: '#FF5C8A',
-    follicular: '#4F83CC',
-    ovulation: '#FFB020',
-    luteal: '#8E59B7',
+    menstruation: '#FF4D7E',
+    follicular: '#FFA5A8',
+    ovulation: '#FFD6E4',
+    luteal: '#C98BFF',
+  },
+
+  cycleArc: {
+    segmentColors: [
+      '#F9B4E6', // 1 light orchid
+      '#FF4D7E', // 2 hot pink (= phase.menstruation)
+      '#F08FE0', // 3 orchid pink
+      '#FFA5A8', // 4 salmon (= phase.follicular)
+      '#FFC6D2', // 5 light pink
+      '#FFD6E4', // 6 pale pink (= phase.ovulation)
+      '#FFE3EC', // 7 very pale pink
+      '#FFE8F0', // 8 near-white pink
+    ],
+    markerHotPink: '#FF4D7E',
+    lutealLilac: '#C98BFF',
   },
 
   nav: {

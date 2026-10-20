@@ -1,85 +1,102 @@
 import React from "react";
 import { StyleSheet, View } from "react-native";
-import Svg, { Path, Polygon, Circle } from "react-native-svg";
+import Svg, {
+  Defs,
+  G,
+  LinearGradient,
+  Mask,
+  Path,
+  Polygon,
+  Rect,
+  Stop,
+} from "react-native-svg";
 import { colors } from "@/theme/colors";
-import { computeCycleArc, describeArc } from "@/utils/cycleArcMath";
+import {
+  computeDashSegments,
+  computeMarkerGeometry,
+} from "@/utils/arcMath";
 
 export interface CycleArcProps {
   currentDay: number;
   cycleLength: number;
-  periodLength: number;
-  ovulationDay: number;
 }
 
-const ARC_SIZE = 250;
-const ARC_STROKE_WIDTH = 14;
-const CX = ARC_SIZE / 2;
-const CY = ARC_SIZE / 2 + 10;
-const RADIUS = (ARC_SIZE - ARC_STROKE_WIDTH) / 2 - 10;
-
-const phaseColors = {
-  menstruation: colors.phase.menstruation,
-  follicular: colors.phase.follicular,
-  ovulation: colors.phase.ovulation,
-  luteal: colors.phase.luteal,
-};
+const VIEW_WIDTH = 320;
+const VIEW_HEIGHT = 165;
+const CX = 160;
+const CY = 150;
+const RADIUS = 124;
+const STROKE_WIDTH = 26;
 
 export const CycleArc: React.FC<CycleArcProps> = ({
   currentDay,
   cycleLength,
-  periodLength,
-  ovulationDay,
 }) => {
-  const { segments, markerPos, markerAngle } = computeCycleArc(
-    currentDay,
-    cycleLength,
-    periodLength,
-    ovulationDay,
+  const dashes = computeDashSegments(
     CX,
     CY,
     RADIUS,
-    phaseColors
+    colors.cycleArc.segmentColors
   );
 
-  const pointerRad = (markerAngle * Math.PI) / 180;
-  const tipX = markerPos.x;
-  const tipY = markerPos.y;
-  const baseDistance = 14;
-  const baseWidth = 6;
-  const normalX = -Math.sin(pointerRad);
-  const normalY = -Math.cos(pointerRad);
-  const baseX = tipX - baseDistance * Math.cos(pointerRad);
-  const baseY = tipY + baseDistance * Math.sin(pointerRad);
-  const p1X = baseX + baseWidth * normalX;
-  const p1Y = baseY + baseWidth * normalY;
-  const p2X = baseX - baseWidth * normalX;
-  const p2Y = baseY - baseWidth * normalY;
+  const marker = computeMarkerGeometry(
+    currentDay,
+    cycleLength,
+    CX,
+    CY,
+    RADIUS
+  );
 
   return (
     <View style={styles.container}>
-      <Svg width={ARC_SIZE} height={CY + 10}>
-        {segments.map((seg) => (
-          <Path
-            key={seg.name}
-            d={describeArc(CX, CY, RADIUS, seg.startAngle, seg.startAngle - seg.sweepAngle)}
-            stroke={seg.color}
-            strokeWidth={ARC_STROKE_WIDTH}
-            strokeLinecap="round"
-            fill="none"
-          />
-        ))}
+      <Svg width={VIEW_WIDTH} height={VIEW_HEIGHT} viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}>
+        <Defs>
+          <LinearGradient
+            id="arcFadeGrad"
+            x1="0"
+            y1="13"
+            x2="0"
+            y2="150"
+            gradientUnits="userSpaceOnUse"
+          >
+            <Stop offset="0%" stopColor="#FFFFFF" stopOpacity="1" />
+            <Stop offset="50%" stopColor="#FFFFFF" stopOpacity="1" />
+            <Stop offset="100%" stopColor="#FFFFFF" stopOpacity="0" />
+          </LinearGradient>
 
-        <Circle
-          cx={tipX}
-          cy={tipY}
-          r={5}
-          fill={colors.white}
-          stroke={colors.brand.primary}
-          strokeWidth={2.5}
-        />
+          <Mask id="arcFadeMask">
+            <Rect
+              x="0"
+              y="0"
+              width={VIEW_WIDTH}
+              height={VIEW_HEIGHT}
+              fill="url(#arcFadeGrad)"
+            />
+          </Mask>
+        </Defs>
+
+        {/* 8 Dashes masked by vertical linear fade */}
+        <G mask="url(#arcFadeMask)">
+          {dashes.map((seg) => (
+            <Path
+              key={`dash-${seg.slot}`}
+              d={seg.path}
+              stroke={seg.color}
+              strokeWidth={STROKE_WIDTH}
+              strokeLinecap="round"
+              fill="none"
+            />
+          ))}
+        </G>
+
+        {/* Position marker: outside and after mask so never faded */}
+        <Polygon points={marker.glowPoints} fill="rgba(255, 77, 126, 0.28)" />
         <Polygon
-          points={`${tipX},${tipY} ${p1X},${p1Y} ${p2X},${p2Y}`}
-          fill={colors.brand.primary}
+          points={marker.points}
+          fill={colors.cycleArc.markerHotPink}
+          stroke="#FFFFFF"
+          strokeWidth={4}
+          strokeLinejoin="round"
         />
       </Svg>
     </View>
@@ -88,8 +105,8 @@ export const CycleArc: React.FC<CycleArcProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    width: ARC_SIZE,
-    height: CY + 10,
+    width: VIEW_WIDTH,
+    height: VIEW_HEIGHT,
     alignItems: "center",
     justifyContent: "flex-start",
   },

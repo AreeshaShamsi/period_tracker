@@ -3,6 +3,7 @@ export * from "./DayChip";
 export * from "./DayStrip";
 export * from "./CycleArc";
 export * from "./CycleCard";
+export * from "./PhaseLegend";
 export * from "./LogSymptomsButton";
 export * from "./RecommendationSection";
 export * from "./MoodSection";
