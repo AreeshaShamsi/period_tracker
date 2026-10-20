@@ -1,77 +1,42 @@
 import React from "react";
 import { StyleSheet, View } from "react-native";
-import Svg, {
-  Defs,
-  G,
-  LinearGradient,
-  Mask,
-  Path,
-  Polygon,
-  Rect,
-  Stop,
-} from "react-native-svg";
+import Svg, { Defs, G, LinearGradient, Mask, Path, Rect, Stop } from "react-native-svg";
 import { colors } from "@/theme/colors";
-import {
-  computeDashSegments,
-  computeMarkerGeometry,
-} from "@/utils/arcMath";
+import { ARC_GEOMETRY, computeDashSegments, computeMarkerGeometry } from "@/utils/arcMath";
 
 export interface CycleArcProps {
   currentDay: number;
   cycleLength: number;
 }
 
-const VIEW_WIDTH = 320;
-const VIEW_HEIGHT = 165;
-const CX = 160;
-const CY = 150;
-const RADIUS = 124;
-const STROKE_WIDTH = 26;
+export const CycleArc: React.FC<CycleArcProps> = ({ currentDay, cycleLength }) => {
+  const {
+    viewWidth,
+    viewHeight,
+    centerX,
+    centerY,
+    radius,
+    dashStrokeWidth,
+    markerOuterStroke,
+    markerInnerStroke,
+    markerShadowSpread,
+    markerShadowOpacity,
+  } = ARC_GEOMETRY;
 
-export const CycleArc: React.FC<CycleArcProps> = ({
-  currentDay,
-  cycleLength,
-}) => {
-  const dashes = computeDashSegments(
-    CX,
-    CY,
-    RADIUS,
-    colors.cycleArc.segmentColors
-  );
-
-  const marker = computeMarkerGeometry(
-    currentDay,
-    cycleLength,
-    CX,
-    CY,
-    RADIUS
-  );
+  const dashes = computeDashSegments(centerX, centerY, radius, colors.cycleArc.segmentColors);
+  const marker = computeMarkerGeometry(currentDay, cycleLength, centerX, centerY, radius);
 
   return (
     <View style={styles.container}>
-      <Svg width={VIEW_WIDTH} height={VIEW_HEIGHT} viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}>
+      <Svg width={viewWidth} height={viewHeight} viewBox={`0 0 ${viewWidth} ${viewHeight}`}>
         <Defs>
-          <LinearGradient
-            id="arcFadeGrad"
-            x1="0"
-            y1="13"
-            x2="0"
-            y2="150"
-            gradientUnits="userSpaceOnUse"
-          >
-            <Stop offset="0%" stopColor="#FFFFFF" stopOpacity="1" />
-            <Stop offset="50%" stopColor="#FFFFFF" stopOpacity="1" />
-            <Stop offset="100%" stopColor="#FFFFFF" stopOpacity="0" />
+          <LinearGradient id="arcFadeGrad" x1="0" y1="13" x2="0" y2={centerY} gradientUnits="userSpaceOnUse">
+            <Stop offset="0%" stopColor={colors.white} stopOpacity="1" />
+            <Stop offset="50%" stopColor={colors.white} stopOpacity="1" />
+            <Stop offset="100%" stopColor={colors.white} stopOpacity="0" />
           </LinearGradient>
-
           <Mask id="arcFadeMask">
-            <Rect
-              x="0"
-              y="0"
-              width={VIEW_WIDTH}
-              height={VIEW_HEIGHT}
-              fill="url(#arcFadeGrad)"
-            />
+            <Rect x="0" y="0" width={viewWidth} height={viewHeight} fill="url(#arcFadeGrad)" />
           </Mask>
         </Defs>
 
@@ -82,7 +47,7 @@ export const CycleArc: React.FC<CycleArcProps> = ({
               key={`dash-${seg.slot}`}
               d={seg.path}
               stroke={seg.color}
-              strokeWidth={STROKE_WIDTH}
+              strokeWidth={dashStrokeWidth}
               strokeLinecap="round"
               fill="none"
             />
@@ -90,14 +55,34 @@ export const CycleArc: React.FC<CycleArcProps> = ({
         </G>
 
         {/* Position marker: outside and after mask so never faded */}
-        <Polygon points={marker.glowPoints} fill="rgba(255, 77, 126, 0.28)" />
-        <Polygon
-          points={marker.points}
-          fill={colors.cycleArc.markerHotPink}
-          stroke="#FFFFFF"
-          strokeWidth={4}
-          strokeLinejoin="round"
-        />
+        <G transform={`translate(${marker.x}, ${marker.y}) rotate(${marker.rotation})`}>
+          <Path
+            d={marker.path}
+            fill={colors.phase.menstruation}
+            fillOpacity={markerShadowOpacity}
+            stroke={colors.phase.menstruation}
+            strokeOpacity={markerShadowOpacity}
+            strokeWidth={markerOuterStroke + markerShadowSpread}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+          <Path
+            d={marker.path}
+            fill={colors.white}
+            stroke={colors.white}
+            strokeWidth={markerOuterStroke}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+          <Path
+            d={marker.path}
+            fill={colors.phase.menstruation}
+            stroke={colors.phase.menstruation}
+            strokeWidth={markerInnerStroke}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        </G>
       </Svg>
     </View>
   );
@@ -105,8 +90,8 @@ export const CycleArc: React.FC<CycleArcProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    width: VIEW_WIDTH,
-    height: VIEW_HEIGHT,
+    width: ARC_GEOMETRY.viewWidth,
+    height: ARC_GEOMETRY.viewHeight,
     alignItems: "center",
     justifyContent: "flex-start",
   },

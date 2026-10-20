@@ -1,3 +1,21 @@
+export const ARC_GEOMETRY = {
+  viewWidth: 320,
+  viewHeight: 165,
+  centerX: 160,
+  centerY: 150,
+  radius: 124,
+  dashStrokeWidth: 26,
+  dashHalfSweep: 3.25,
+  slotAngle: 22.5,
+  visibleStart: 22.5,
+  visibleEnd: 157.5,
+  markerSide: 26,
+  markerOuterStroke: 14,
+  markerInnerStroke: 6,
+  markerShadowSpread: 6,
+  markerShadowOpacity: 0.25,
+} as const;
+
 export interface DashSegment {
   path: string;
   color: string;
@@ -5,55 +23,40 @@ export interface DashSegment {
 }
 
 export interface MarkerGeometry {
-  angle: number;
-  points: string;
-  glowPoints: string;
+  x: number;
+  y: number;
+  rotation: number;
+  path: string;
 }
 
-export function polarToCartesian(
-  cx: number,
-  cy: number,
-  radius: number,
-  angleInDegrees: number
-): { x: number; y: number } {
-  const rad = (angleInDegrees * Math.PI) / 180;
-  return {
-    x: cx - radius * Math.cos(rad),
-    y: cy - radius * Math.sin(rad),
-  };
+export function polarToCartesian(cx: number, cy: number, radius: number, angleDeg: number) {
+  const rad = (angleDeg * Math.PI) / 180;
+  return { x: cx - radius * Math.cos(rad), y: cy - radius * Math.sin(rad) };
 }
 
-export function describeArc(
-  cx: number,
-  cy: number,
-  radius: number,
-  startAngle: number,
-  endAngle: number
-): string {
+export function describeArc(cx: number, cy: number, radius: number, startAngle: number, endAngle: number) {
   const p1 = polarToCartesian(cx, cy, radius, startAngle);
   const p2 = polarToCartesian(cx, cy, radius, endAngle);
   return `M ${p1.x.toFixed(2)} ${p1.y.toFixed(2)} A ${radius} ${radius} 0 0 1 ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
 }
 
-export function computeDashSegments(
-  cx: number,
-  cy: number,
-  radius: number,
-  segmentColors: string[]
-): DashSegment[] {
-  const slotAngle = 180 / 8; // 22.5 deg
-  const halfSweep = 3.25; // 6.5 deg path sweep + 26px round caps ≈ 40x26 pill
-
-  return segmentColors.slice(0, 8).map((color, i) => {
-    const centerAngle = (i + 0.5) * slotAngle;
-    const startAngle = centerAngle - halfSweep;
-    const endAngle = centerAngle + halfSweep;
+export function computeDashSegments(cx: number, cy: number, radius: number, colors: string[]): DashSegment[] {
+  const { slotAngle, dashHalfSweep } = ARC_GEOMETRY;
+  return colors.slice(0, 8).map((color, i) => {
+    const center = (i + 0.5) * slotAngle;
     return {
       slot: i + 1,
       color,
-      path: describeArc(cx, cy, radius, startAngle, endAngle),
+      path: describeArc(cx, cy, radius, center - dashHalfSweep, center + dashHalfSweep),
     };
   });
+}
+
+export function getMarkerTrianglePath(side: number = ARC_GEOMETRY.markerSide): string {
+  const r = side / Math.sqrt(3);
+  const halfR = r / 2;
+  const halfS = side / 2;
+  return `M ${r.toFixed(2)} 0 L ${(-halfR).toFixed(2)} ${halfS.toFixed(2)} L ${(-halfR).toFixed(2)} ${(-halfS).toFixed(2)} Z`;
 }
 
 export function computeMarkerGeometry(
@@ -63,51 +66,28 @@ export function computeMarkerGeometry(
   cy: number,
   radius: number
 ): MarkerGeometry {
-  const visibleStart = 22.5;
-  const visibleEnd = 157.5;
+  const { visibleStart, visibleEnd, markerSide } = ARC_GEOMETRY;
   const safeCycle = Math.max(cycleLength || 28, 1);
   const progress = Math.max(0, Math.min(1, (currentDay - 0.5) / safeCycle));
-  const rawAngle = visibleStart + (visibleEnd - visibleStart) * progress;
-  const angle = Math.max(visibleStart, Math.min(visibleEnd, rawAngle));
+  const theta = Math.max(visibleStart, Math.min(visibleEnd, visibleStart + (visibleEnd - visibleStart) * progress));
 
-  const rad = (angle * Math.PI) / 180;
-  const center = polarToCartesian(cx, cy, radius, angle);
-  // Tangent pointing backward (counter-clockwise)
-  const ux = -Math.sin(rad);
-  const uy = Math.cos(rad);
-  // Outward normal
-  const nx = -Math.cos(rad);
-  const ny = -Math.sin(rad);
-
-  const formatPoly = (dApex: number, dBase: number, w: number): string => {
-    const aX = center.x + dApex * ux;
-    const aY = center.y + dApex * uy;
-    const b1X = center.x - dBase * ux + w * nx;
-    const b1Y = center.y - dBase * uy + w * ny;
-    const b2X = center.x - dBase * ux - w * nx;
-    const b2Y = center.y - dBase * uy - w * ny;
-    return `${aX.toFixed(2)},${aY.toFixed(2)} ${b1X.toFixed(2)},${b1Y.toFixed(2)} ${b2X.toFixed(2)},${b2Y.toFixed(2)}`;
-  };
+  const rad = (theta * Math.PI) / 180;
+  const x = cx - radius * Math.cos(rad);
+  const y = cy - radius * Math.sin(rad);
 
   return {
-    angle,
-    points: formatPoly(22, 11, 19),
-    glowPoints: formatPoly(26, 14, 23),
+    x: Number(x.toFixed(2)),
+    y: Number(y.toFixed(2)),
+    rotation: Number((theta - 90).toFixed(2)),
+    path: getMarkerTrianglePath(markerSide),
   };
 }
 
-export function getPhaseForDay(
-  currentDay: number,
-  cycleLength: number,
-  periodLength: number,
-  ovulationDay: number
-): string {
-  const pLen = periodLength || 5;
-  const cLen = cycleLength || 28;
-  const oDay = ovulationDay || Math.max(1, cLen - 14);
-
-  if (currentDay <= pLen) return "Menstruation Phase";
-  if (currentDay >= oDay - 1 && currentDay <= oDay + 1) return "Ovulation Phase";
-  if (currentDay < oDay - 1) return "Follicular Phase";
+export function getPhaseForDay(cDay: number, cLen: number, pLen: number, oDay: number): string {
+  const period = pLen || 5;
+  const ov = oDay || Math.max(1, (cLen || 28) - 14);
+  if (cDay <= period) return "Menstruation Phase";
+  if (cDay >= ov - 1 && cDay <= ov + 1) return "Ovulation Phase";
+  if (cDay < ov - 1) return "Follicular Phase";
   return "Luteal Phase";
 }
