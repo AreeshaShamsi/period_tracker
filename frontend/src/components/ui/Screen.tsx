@@ -38,7 +38,7 @@ export const Screen: React.FC<ScreenProps> = ({
   };
 
   const innerPaddingStyle: ViewStyle = paddingHorizontal
-    ? { paddingHorizontal: spacing.xl }
+    ? { paddingHorizontal: spacing.lg }
     : {};
 
   return (
