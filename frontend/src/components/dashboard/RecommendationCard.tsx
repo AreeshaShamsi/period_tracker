@@ -1,5 +1,11 @@
 import React from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import {
+  Image,
+  ImageSourcePropType,
+  Pressable,
+  StyleSheet,
+  View,
+} from "react-native";
 import { colors } from "@/theme/colors";
 import { radius } from "@/theme/radius";
 import { spacing } from "@/theme/spacing";
@@ -11,7 +17,7 @@ export interface RecommendationCardItem {
   id: string;
   title: string;
   description: string;
-  icon: React.ReactNode;
+  icon: ImageSourcePropType;
   onPress?: () => void;
 }
 
@@ -39,7 +45,13 @@ export const RecommendationCard: React.FC<RecommendationCardProps> = ({
         pressed && styles.cardPressed,
       ]}
     >
-      <View style={styles.tile}>{item.icon}</View>
+      <View style={styles.tile}>
+        <Image
+          source={item.icon}
+          style={styles.tileImage}
+          resizeMode="contain"
+        />
+      </View>
       <AppText
         variant="cardTitle"
         weight="700"
@@ -76,7 +88,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   cardPressed: {
-    borderColor: colors.brand.primary,
+    borderColor: colors.recommendation.cardPressedBorder,
     opacity: opacity.pressed,
   },
   tile: {
@@ -84,9 +96,15 @@ const styles = StyleSheet.create({
     height: sizes.recommendation.tile,
     borderRadius: radius.tile,
     backgroundColor: colors.recommendation.tileBackground,
+    borderWidth: sizes.recommendation.tileBorderWidth,
+    borderColor: colors.recommendation.tileBorder,
     alignItems: "center",
     justifyContent: "center",
     marginBottom: spacing.sm,
+  },
+  tileImage: {
+    width: sizes.recommendation.image,
+    height: sizes.recommendation.image,
   },
   title: {
     color: colors.text.primary,

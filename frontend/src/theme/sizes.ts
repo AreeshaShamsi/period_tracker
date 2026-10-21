@@ -20,6 +20,8 @@ export const sizes = {
   recommendation: {
     cardMinHeight: 144,
     tile: 48,
+    image: 38,
+    tileBorderWidth: 1,
   },
 } as const;
 
