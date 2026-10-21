@@ -23,6 +23,12 @@ export const sizes = {
     image: 38,
     tileBorderWidth: 1,
   },
+  header: {
+    avatarSize: 52,
+    avatarRingWidth: 2,
+    taglineFontSize: 22,
+    taglineFontSizeCompact: 17,
+  },
 } as const;
 
 export type Sizes = typeof sizes;

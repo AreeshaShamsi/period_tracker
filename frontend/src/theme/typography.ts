@@ -199,8 +199,8 @@ export const typography: Record<TypographyVariant, TextStyle> = {
     color: colors.textSecondary,
   },
   heading: {
-    fontSize: 24,
-    lineHeight: 30,
+    fontSize: 21,
+    lineHeight: 27,
     fontFamily: POPPINS_FONTS.semibold,
     color: colors.textPrimary,
     textAlign: "left",

@@ -1,6 +1,6 @@
 import { ViewStyle } from "react-native";
 
-export const shadows: Record<"none" | "subtle" | "card" | "elevated", ViewStyle> = {
+export const shadows: Record<"none" | "subtle" | "card" | "elevated" | "avatar", ViewStyle> = {
   none: {
     shadowColor: "transparent",
     shadowOffset: { width: 0, height: 0 },
@@ -28,6 +28,13 @@ export const shadows: Record<"none" | "subtle" | "card" | "elevated", ViewStyle>
     shadowOpacity: 0.1,
     shadowRadius: 16,
     elevation: 4,
+  },
+  avatar: {
+    shadowColor: "#FF5C8A",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 2,
   },
 };
 
