@@ -100,10 +100,14 @@ const baseColors = {
   },
 
   recommendation: {
+    cardBackground: '#FFF1F5',
+    tileBackground: '#FFFFFF',
     nutritionBg: '#FFF4ED',
     nutritionTint: '#FF8A34',
     activityBg: '#F0F5FF',
     activityTint: '#3B82F6',
+    sleepTint: '#8B5CF6',
+    hydrationTint: '#0EA5E9',
   },
 };
 

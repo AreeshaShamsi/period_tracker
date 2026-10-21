@@ -6,4 +6,5 @@ export * from "./CycleCard";
 export * from "./PhaseLegend";
 export * from "./LogSymptomsButton";
 export * from "./RecommendationSection";
+export * from "./RecommendationCard";
 export * from "./MoodSection";

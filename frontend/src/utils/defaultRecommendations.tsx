@@ -5,7 +5,9 @@ import { RecommendationItem } from "@/components/dashboard/RecommendationSection
 
 export function getDefaultRecommendations(
   onNutritionPress?: () => void,
-  onActivityPress?: () => void
+  onActivityPress?: () => void,
+  onSleepPress?: () => void,
+  onHydrationPress?: () => void
 ): RecommendationItem[] {
   return [
     {
@@ -27,7 +29,7 @@ export function getDefaultRecommendations(
     {
       id: "rec-activity",
       title: "Activity",
-      description: "Light yoga & restorative stretching",
+      description: "Light yoga & restorative walks",
       variant: "activity",
       icon: (
         <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
@@ -41,6 +43,36 @@ export function getDefaultRecommendations(
         </Svg>
       ),
       onPress: onActivityPress,
+    },
+    {
+      id: "rec-sleep",
+      title: "Sleep",
+      description: "Restful sleep for cycle balance",
+      variant: "sleep",
+      icon: (
+        <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
+          <Path
+            d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"
+            fill={colors.recommendation.sleepTint}
+          />
+        </Svg>
+      ),
+      onPress: onSleepPress,
+    },
+    {
+      id: "rec-hydration",
+      title: "Hydration",
+      description: "Electrolytes & warm herbal tea",
+      variant: "hydration",
+      icon: (
+        <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
+          <Path
+            d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"
+            fill={colors.recommendation.hydrationTint}
+          />
+        </Svg>
+      ),
+      onPress: onHydrationPress,
     },
   ];
 }

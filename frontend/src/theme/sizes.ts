@@ -17,6 +17,10 @@ export const sizes = {
     large: 56,
   },
   touchTarget: 44,
+  recommendation: {
+    cardMinHeight: 144,
+    tile: 48,
+  },
 } as const;
 
 export type Sizes = typeof sizes;
