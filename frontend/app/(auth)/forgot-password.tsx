@@ -5,27 +5,59 @@ import { colors } from "@/theme/colors";
 import { radius } from "@/theme/radius";
 import { sizes } from "@/theme/sizes";
 import { AuthFooterLink, AuthHeader } from "@/components/auth";
-import { AppButton, AppCard, AppIcon, AppInput, AppText, Screen } from "@/components/ui";
+import { AppButton, AppCard, AppIcon, AppInput, AppText, ErrorModal, Screen } from "@/components/ui";
+import { authService } from "@/services/auth.service";
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
 
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [errorModal, setErrorModal] = useState<{
+    visible: boolean;
+    title?: string;
+    message: string;
+  }>({
+    visible: false,
+    message: "",
+  });
 
-  const handleSendResetLink = () => {
+  const handleSendResetLink = async () => {
+    if (isLoading) return;
     setEmailError("");
 
-    if (!email.trim()) {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
       setEmailError("Email is required");
       return;
-    } else if (!email.includes("@")) {
+    } else if (!trimmedEmail.includes("@")) {
       setEmailError("Please enter a valid email address");
       return;
     }
 
-    setIsSubmitted(true);
+    setIsLoading(true);
+    try {
+      await authService.forgotPassword(trimmedEmail);
+      setIsSubmitted(true);
+    } catch (err) {
+      const details = authService.getAuthErrorDetails(
+        err,
+        "Failed to send reset link. Please check your email and try again."
+      );
+      if (details.code === "INVALID_EMAIL" || details.code === "USER_NOT_FOUND") {
+        setEmailError(details.message);
+      } else {
+        setErrorModal({
+          visible: true,
+          title: details.title || "Reset Password Notice",
+          message: details.message,
+        });
+      }
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleBack = () => {
@@ -69,6 +101,8 @@ export default function ForgotPasswordScreen() {
             <AppButton
               title="Send Reset Link"
               variant="primary"
+              loading={isLoading}
+              disabled={isLoading}
               onPress={handleSendResetLink}
               style={{
                 height: sizes.buttonHeight.medium,
@@ -146,6 +180,13 @@ export default function ForgotPasswordScreen() {
           />
         </View>
       )}
+
+      <ErrorModal
+        visible={errorModal.visible}
+        title={errorModal.title}
+        message={errorModal.message}
+        onDismiss={() => setErrorModal({ visible: false, message: "" })}
+      />
     </Screen>
   );
 }

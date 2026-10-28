@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
-import * as WebBrowser from "expo-web-browser";
-import * as Google from "expo-auth-session/providers/google";
-import { ResponseType } from "expo-auth-session";
+import {
+  GoogleAuthProvider,
+  signInWithCredential,
+  signInWithPopup,
+} from "firebase/auth";
 import { AuthErrorInfo, authService } from "@/services/auth.service";
-
-// Complete any pending web authentication sessions
-WebBrowser.maybeCompleteAuthSession();
+import {
+  getFirebaseAuth,
+  isFirebaseClientConfigured,
+  webClientId,
+} from "@/config/firebase";
 
 export interface UseGoogleAuthOptions {
   mode?: "login" | "link";
@@ -15,160 +19,230 @@ export interface UseGoogleAuthOptions {
 }
 
 /**
- * Custom hook managing Google OAuth flow for Web and Android.
- * Supports:
- * - mode === "login": Exchanges Google ID token with Lunari backend for a session token.
- * - mode === "link": Links Google identity to an existing authenticated user account.
+ * Safely retrieve @react-native-google-signin/google-signin native module if available.
+ * Prevents TurboModuleRegistry crashes in Expo Web and standard Expo Go environments.
+ */
+function getNativeGoogleSignin(): {
+  GoogleSignin: any | null;
+  statusCodes: Record<string, string>;
+} {
+  if (Platform.OS === "web") {
+    return { GoogleSignin: null, statusCodes: {} };
+  }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require("@react-native-google-signin/google-signin");
+    return {
+      GoogleSignin: mod.GoogleSignin || null,
+      statusCodes: mod.statusCodes || {},
+    };
+  } catch {
+    // In standard Expo Go or environments without the native module compiled in
+    return { GoogleSignin: null, statusCodes: {} };
+  }
+}
+
+/**
+ * Custom hook managing Firebase Google Authentication across Android, iOS, and Web.
  *
- * Configured via:
- * - process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB
- * - process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID
+ * Flow:
+ * 1. User taps "Continue with Google"
+ * 2. Android (Dev/Prod Build): Authenticates natively via @react-native-google-signin/google-signin
+ *    Web: Authenticates via Firebase signInWithPopup
+ *    Expo Go: Displays clear instruction that an Expo development build is required
+ * 3. Exchanges Google credentials with Firebase Authentication for a verified Firebase ID token
+ * 4. Sends verified Firebase ID token to Lunari backend (/api/auth/google or /api/auth/link-google)
+ * 5. Lunari backend verifies Firebase ID token via Firebase Admin SDK and issues application JWT
+ * 6. Application session token is stored securely; navigation proceeds based on onboarding status
  */
 export function useGoogleAuth(options?: UseGoogleAuthOptions) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const webClientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB;
-  const androidClientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID;
-
-  const trimmedWebClientId = webClientId?.trim();
-  const trimmedAndroidClientId = androidClientId?.trim();
-
-  // Determine configuration availability per platform
-  const isWebConfigured = Boolean(trimmedWebClientId);
-  const isAndroidConfigured = Boolean(trimmedAndroidClientId);
-  const isPlatformConfigured = Platform.select({
-    android: isAndroidConfigured || isWebConfigured,
-    default: isWebConfigured,
-  });
 
   const optionsRef = useRef(options);
   useEffect(() => {
     optionsRef.current = options;
   }, [options]);
 
-  // Pass fallback string ("") so expo-auth-session does not throw invariantClientId
-  // during component render and crash the entire Expo Router layout when client IDs
-  // have not yet been placed into the local .env file.
-  //
-  // On Web, Google.useAuthRequest automatically generates redirectUri as window.location.origin
-  // (e.g. http://localhost:8081 without trailing slash).
-  // On Android, it uses the native package redirect (com.balaji_ro.periodtracker:/oauthredirect).
-  const [request, response, promptAsync] = Google.useAuthRequest({
-    webClientId: trimmedWebClientId || "",
-    androidClientId: trimmedAndroidClientId || "",
-    responseType: ResponseType.IdToken,
-    scopes: ["openid", "profile", "email"],
-  });
-
+  // Configure native Google Sign-In for Android / iOS when running in a development build
   useEffect(() => {
-    if (__DEV__ && request?.redirectUri) {
-      console.log(`[GoogleAuth] Initialized with redirect_uri: "${request.redirectUri}"`);
+    if (Platform.OS !== "web") {
+      try {
+        const { GoogleSignin } = getNativeGoogleSignin();
+        if (GoogleSignin && typeof GoogleSignin.configure === "function") {
+          GoogleSignin.configure({
+            webClientId: webClientId.trim() || undefined,
+            scopes: ["email", "profile"],
+            offlineAccess: false,
+          });
+        }
+      } catch (err) {
+        if (__DEV__) {
+          console.warn("[GoogleAuth] Failed to configure native GoogleSignin:", err);
+        }
+      }
     }
-  }, [request?.redirectUri]);
+  }, []);
 
-  useEffect(() => {
-    async function handleResponse() {
-      if (!response) return;
+  const isConfigured = isFirebaseClientConfigured();
 
-      if (response.type === "success") {
-        const { id_token, idToken } = (response.params as any) || {};
-        const token = id_token || idToken;
+  const signInWithGoogle = async () => {
+    if (isLoading) return; // Prevent duplicate submissions
 
-        if (!token) {
-          const msg = "Google sign-in succeeded, but no ID token was received.";
+    setError(null);
+
+    // 1. Check if Firebase configuration is provided
+    if (!isConfigured) {
+      const msg =
+        "Google Sign-In is not configured. Please add EXPO_PUBLIC_FIREBASE_API_KEY and EXPO_PUBLIC_FIREBASE_PROJECT_ID in frontend/.env.";
+      setError(msg);
+      optionsRef.current?.onError?.(msg, {
+        title: "Configuration Notice",
+        message: msg,
+        code: "FIREBASE_NOT_CONFIGURED",
+      });
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      let firebaseIdToken: string | null = null;
+      const auth = getFirebaseAuth();
+
+      if (Platform.OS === "web") {
+        // Web flow: Firebase popup
+        const provider = new GoogleAuthProvider();
+        provider.addScope("email");
+        provider.addScope("profile");
+        const userCredential = await signInWithPopup(auth, provider);
+        firebaseIdToken = await userCredential.user.getIdToken();
+      } else {
+        // Native Android / iOS flow
+        const { GoogleSignin, statusCodes } = getNativeGoogleSignin();
+
+        if (!GoogleSignin) {
+          const msg =
+            "Native Google Sign-In requires an Expo development build or standalone build. Please run the app using 'npx expo run:android'.";
           setError(msg);
           optionsRef.current?.onError?.(msg, {
-            title: "Sign In Error",
+            title: "Development Build Required",
             message: msg,
+            code: "DEV_BUILD_REQUIRED",
           });
           setIsLoading(false);
           return;
         }
 
-        setIsLoading(true);
-        setError(null);
         try {
-          if (optionsRef.current?.mode === "link") {
-            await authService.linkGoogle(token);
-          } else {
-            await authService.googleLogin(token);
+          await GoogleSignin.hasPlayServices({
+            showPlayServicesUpdateDialog: true,
+          });
+        } catch (playErr: any) {
+          if (
+            playErr?.code === statusCodes?.PLAY_SERVICES_NOT_AVAILABLE ||
+            /play services/i.test(playErr?.message || "")
+          ) {
+            const msg =
+              "Google Play Services is not available or outdated on this device. Please update Google Play Services.";
+            setError(msg);
+            optionsRef.current?.onError?.(msg, {
+              title: "Play Services Notice",
+              message: msg,
+              code: "PLAY_SERVICES_NOT_AVAILABLE",
+            });
+            setIsLoading(false);
+            return;
           }
-          optionsRef.current?.onSuccess?.();
-        } catch (err) {
-          const fallback =
-            optionsRef.current?.mode === "link"
-              ? "Failed to link Google account. Please try again."
-              : "Google sign-in failed. Please try again.";
-          const details = authService.getAuthErrorDetails(err, fallback);
-          setError(details.message);
-          optionsRef.current?.onError?.(details.message, details);
-        } finally {
-          setIsLoading(false);
+          throw playErr;
         }
-      } else if (response.type === "cancel") {
+
+        const response = await GoogleSignin.signIn();
+
+        // Check for cancellation in @react-native-google-signin (response.type === 'cancelled')
+        if ((response as any)?.type === "cancelled") {
+          setIsLoading(false);
+          return;
+        }
+
+        // Extract Google ID token
+        const googleIdToken =
+          (response as any)?.data?.idToken ||
+          (response as any)?.idToken ||
+          (response as any)?.data?.user?.idToken;
+
+        if (!googleIdToken) {
+          throw new Error("Google sign-in succeeded, but no ID token was received from Google.");
+        }
+
+        // Authenticate with Firebase using Google credential
+        const credential = GoogleAuthProvider.credential(googleIdToken);
+        const userCredential = await signInWithCredential(auth, credential);
+        firebaseIdToken = await userCredential.user.getIdToken();
+      }
+
+      if (!firebaseIdToken) {
+        throw new Error("Failed to acquire verified Firebase ID token.");
+      }
+
+      // 4. Send Firebase ID token to Lunari backend
+      if (optionsRef.current?.mode === "link") {
+        await authService.linkGoogle(firebaseIdToken);
+      } else {
+        await authService.googleLogin(firebaseIdToken);
+      }
+
+      // 5. Notify success
+      optionsRef.current?.onSuccess?.();
+    } catch (err: any) {
+      const { statusCodes } = getNativeGoogleSignin();
+
+      // Cancellation error handling (never show an alert or false error for user cancelling)
+      if (
+        (statusCodes?.SIGN_IN_CANCELLED && err?.code === statusCodes.SIGN_IN_CANCELLED) ||
+        err?.code === "auth/popup-closed-by-user" ||
+        err?.message?.includes("cancelled") ||
+        err?.message?.includes("canceled")
+      ) {
         setIsLoading(false);
-      } else if (response.type === "error") {
+        return;
+      }
+
+      if (statusCodes?.IN_PROGRESS && err?.code === statusCodes.IN_PROGRESS) {
         setIsLoading(false);
+        return;
+      }
+
+      // Detect Expo Go limitation
+      const isExpoGo =
+        err?.message?.includes("RNGoogleSignin") ||
+        err?.message?.includes("NativeModule") ||
+        err?.message?.includes("development build");
+
+      if (isExpoGo) {
         const msg =
-          response.error?.message ||
-          "Google sign-in was cancelled or encountered an error.";
+          "Native Google Sign-In requires an Expo development build or standalone build. Please run the app using 'npx expo run:android'.";
         setError(msg);
         optionsRef.current?.onError?.(msg, {
-          title: "Sign In Notice",
+          title: "Development Build Required",
           message: msg,
+          code: "DEV_BUILD_REQUIRED",
         });
+        setIsLoading(false);
+        return;
       }
-    }
 
-    handleResponse();
-  }, [response]);
+      // Map backend or network error
+      const fallback =
+        optionsRef.current?.mode === "link"
+          ? "Failed to link Google account. Please try again."
+          : "Google sign-in failed. Please try again.";
+      const details = authService.getAuthErrorDetails(err, fallback);
 
-  const signInWithGoogle = async () => {
-    setError(null);
-
-    // Provide actionable error when client ID is missing for the current platform
-    if (!isPlatformConfigured) {
-      const missingVar =
-        Platform.OS === "android" && !isAndroidConfigured && !isWebConfigured
-          ? "EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID (or EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB)"
-          : "EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB";
-      const msg = `Google Sign-In is not configured. Please set ${missingVar} in frontend/.env.`;
-      setError(msg);
-      optionsRef.current?.onError?.(msg, {
-        title: "Configuration Notice",
-        message: msg,
-      });
-      return;
-    }
-
-    if (!request) {
-      const msg = "Google Sign-In is not ready. Please try again in a moment.";
-      setError(msg);
-      optionsRef.current?.onError?.(msg, {
-        title: "Sign In Notice",
-        message: msg,
-      });
-      return;
-    }
-
-    if (__DEV__) {
-      console.log(
-        `[GoogleAuth] Starting Google OAuth flow. Platform: ${Platform.OS}, redirect_uri: "${request.redirectUri}"`
-      );
-    }
-
-    try {
-      setIsLoading(true);
-      await promptAsync();
-    } catch (err: any) {
+      setError(details.message);
+      optionsRef.current?.onError?.(details.message, details);
+    } finally {
       setIsLoading(false);
-      const msg = err?.message || "Failed to start Google sign-in.";
-      setError(msg);
-      optionsRef.current?.onError?.(msg, {
-        title: "Sign In Notice",
-        message: msg,
-      });
     }
   };
 
@@ -176,8 +250,7 @@ export function useGoogleAuth(options?: UseGoogleAuthOptions) {
     signInWithGoogle,
     isLoading,
     error,
-    isReady: Boolean(isPlatformConfigured && request),
-    isConfigured: Boolean(isPlatformConfigured),
-    redirectUri: request?.redirectUri,
+    isReady: true,
+    isConfigured,
   };
 }

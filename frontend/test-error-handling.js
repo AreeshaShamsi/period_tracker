@@ -29,6 +29,78 @@ function isAxiosError(payload) {
 }
 
 function getAuthErrorDetails(error, fallback = 'Something went wrong. Please try again.') {
+  // 1. Firebase Authentication error codes (from Firebase Auth client SDK)
+  const errCode = error?.code;
+  const errMessage = error?.message || '';
+
+  if (errCode === 'auth/email-already-in-use' || /email-already-in-use/i.test(errMessage)) {
+    return {
+      title: 'Account Already Exists',
+      message: 'An account with this email address already exists. Please sign in instead.',
+      code: 'ACCOUNT_EXISTS',
+    };
+  }
+
+  if (errCode === 'auth/user-not-found' || /user-not-found/i.test(errMessage)) {
+    return {
+      title: 'Account Not Found',
+      message: 'No account found with this email address. Please sign up first.',
+      code: 'USER_NOT_FOUND',
+    };
+  }
+
+  if (
+    errCode === 'auth/wrong-password' ||
+    errCode === 'auth/invalid-credential' ||
+    /invalid-credential|wrong-password/i.test(errMessage)
+  ) {
+    return {
+      title: 'Sign In Error',
+      message: 'Your email or password is incorrect.',
+      code: 'INVALID_CREDENTIALS',
+    };
+  }
+
+  if (errCode === 'auth/weak-password' || /weak-password/i.test(errMessage)) {
+    return {
+      title: 'Weak Password',
+      message: 'Password is too weak. Please use at least 6 characters.',
+      code: 'WEAK_PASSWORD',
+    };
+  }
+
+  if (errCode === 'auth/invalid-email' || /invalid-email/i.test(errMessage)) {
+    return {
+      title: 'Invalid Email',
+      message: 'Please enter a valid email address.',
+      code: 'INVALID_EMAIL',
+    };
+  }
+
+  if (errCode === 'auth/too-many-requests' || /too-many-requests/i.test(errMessage)) {
+    return {
+      title: 'Access Temporarily Disabled',
+      message: 'Too many failed attempts. Please try again later or reset your password.',
+      code: 'TOO_MANY_REQUESTS',
+    };
+  }
+
+  if (errCode === 'auth/user-disabled' || /user-disabled/i.test(errMessage)) {
+    return {
+      title: 'Account Disabled',
+      message: 'This account has been disabled. Please contact support.',
+      code: 'USER_DISABLED',
+    };
+  }
+
+  if (errCode === 'auth/network-request-failed' || /network-request-failed/i.test(errMessage)) {
+    return {
+      title: 'Connection Error',
+      message: 'Unable to connect right now. Please check your internet connection and try again.',
+      code: 'NETWORK_ERROR',
+    };
+  }
+
   if (isAxiosError(error)) {
     // 1. Network / connectivity error
     if (
@@ -79,7 +151,9 @@ function getAuthErrorDetails(error, fallback = 'Something went wrong. Please try
     if (status === 409 || code === 'ACCOUNT_LINK_REQUIRED') {
       return {
         title: 'Account Already Exists',
-        message: 'This email is already registered with a password. Sign in to your existing account first, then link Google to use either sign-in method.',
+        message:
+          rawMessage ||
+          'An account with this email address already exists. Please sign in with your original authentication provider.',
         code: 'ACCOUNT_LINK_REQUIRED',
       };
     }
@@ -110,6 +184,14 @@ function getAuthErrorDetails(error, fallback = 'Something went wrong. Please try
     }
 
     // 6. Unknown / server error (500, etc.)
+    if (status && status >= 500) {
+      return {
+        title: 'Server Notice',
+        message: 'Something went wrong on the server. Please try again later.',
+        code: code || 'SERVER_ERROR',
+      };
+    }
+
     return {
       title: 'Notice',
       message: fallback,
@@ -181,14 +263,14 @@ async function runErrorHandlingTests() {
       data: {
         status: 'error',
         code: 'ACCOUNT_LINK_REQUIRED',
-        message: 'An account with this email address already exists using password authentication.',
+        message: 'An account with this email address already exists. Please sign in with your original authentication provider.',
       },
     });
     const details = getAuthErrorDetails(err);
     assert.strictEqual(details.title, 'Account Already Exists');
     assert.strictEqual(
       details.message,
-      'This email is already registered with a password. Sign in to your existing account first, then link Google to use either sign-in method.'
+      'An account with this email address already exists. Please sign in with your original authentication provider.'
     );
     assert.strictEqual(details.code, 'ACCOUNT_LINK_REQUIRED');
   });
@@ -246,6 +328,54 @@ async function runErrorHandlingTests() {
     );
   });
 
+  // --- Firebase Client Error Code Tests ---
+  test('Firebase auth/email-already-in-use maps to "Account Already Exists"', () => {
+    const err = { code: 'auth/email-already-in-use', message: 'Firebase: Error (auth/email-already-in-use).' };
+    const details = getAuthErrorDetails(err);
+    assert.strictEqual(details.title, 'Account Already Exists');
+    assert.strictEqual(details.code, 'ACCOUNT_EXISTS');
+  });
+
+  test('Firebase auth/invalid-credential & auth/wrong-password map to "Sign In Error"', () => {
+    const err1 = { code: 'auth/invalid-credential', message: 'Firebase: Error (auth/invalid-credential).' };
+    const details1 = getAuthErrorDetails(err1);
+    assert.strictEqual(details1.title, 'Sign In Error');
+    assert.strictEqual(details1.message, 'Your email or password is incorrect.');
+
+    const err2 = { code: 'auth/wrong-password', message: 'Firebase: Error (auth/wrong-password).' };
+    const details2 = getAuthErrorDetails(err2);
+    assert.strictEqual(details2.title, 'Sign In Error');
+    assert.strictEqual(details2.message, 'Your email or password is incorrect.');
+  });
+
+  test('Firebase auth/weak-password maps to "Weak Password"', () => {
+    const err = { code: 'auth/weak-password', message: 'Password is too weak' };
+    const details = getAuthErrorDetails(err);
+    assert.strictEqual(details.title, 'Weak Password');
+    assert.strictEqual(details.code, 'WEAK_PASSWORD');
+  });
+
+  test('Firebase auth/invalid-email maps to "Invalid Email"', () => {
+    const err = { code: 'auth/invalid-email', message: 'Invalid email' };
+    const details = getAuthErrorDetails(err);
+    assert.strictEqual(details.title, 'Invalid Email');
+    assert.strictEqual(details.code, 'INVALID_EMAIL');
+  });
+
+  test('Firebase auth/too-many-requests maps to "Access Temporarily Disabled"', () => {
+    const err = { code: 'auth/too-many-requests', message: 'Too many attempts' };
+    const details = getAuthErrorDetails(err);
+    assert.strictEqual(details.title, 'Access Temporarily Disabled');
+    assert.strictEqual(details.code, 'TOO_MANY_REQUESTS');
+  });
+
+  test('Firebase auth/user-not-found maps to "Account Not Found"', () => {
+    const err = { code: 'auth/user-not-found', message: 'User not found' };
+    const details = getAuthErrorDetails(err);
+    assert.strictEqual(details.title, 'Account Not Found');
+    assert.strictEqual(details.code, 'USER_NOT_FOUND');
+  });
+
   test('Server 500 error / SQL error never leaks internal details to user', () => {
     const err = createAxiosError({
       status: 500,
@@ -255,8 +385,8 @@ async function runErrorHandlingTests() {
       },
     });
     const details = getAuthErrorDetails(err);
-    assert.strictEqual(details.title, 'Notice');
-    assert.strictEqual(details.message, 'Something went wrong. Please try again.');
+    assert.strictEqual(details.title, 'Server Notice');
+    assert.strictEqual(details.message, 'Something went wrong on the server. Please try again later.');
   });
 
   console.log('\n--- 2. Testing OK Button & Modal State Isolation ---');

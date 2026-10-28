@@ -194,7 +194,7 @@ export default function SignInScreen({
     } catch (err) {
       const errorDetails = authService.getAuthErrorDetails(
         err,
-        "Your email or password is incorrect."
+        "Sign in failed. Please check your credentials and try again."
       );
       setError(errorDetails.message);
       // Prevent duplicate popups from repeated clicks

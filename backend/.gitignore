@@ -3,10 +3,13 @@ node_modules/
 .pnp
 .pnp.js
 
-# Environment variables
+# Environment variables and secrets
 .env
 .env.*
 !.env.example
+*service-account*.json
+*firebase-adminsdk*.json
+*credentials*.json
 
 # Logs
 logs/

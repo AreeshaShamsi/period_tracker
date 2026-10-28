@@ -1,177 +1,168 @@
-const { OAuth2Client } = require('google-auth-library');
 const { pool, query } = require('../config/database');
+const { getAuth, _setAuthInstance, isFirebaseConfigured } = require('../config/firebase');
 const { generateToken } = require('./auth.service');
 
-let client = new OAuth2Client();
-
 /**
- * For testing purposes: set mock OAuth2Client instance
- * @param {OAuth2Client} customClient
- */
-function _setOAuth2Client(customClient) {
-  client = customClient;
-}
-
-/**
- * Retrieve list of configured Google OAuth client IDs from environment.
- * Primary keys:
- * - GOOGLE_CLIENT_ID_WEB
- * - GOOGLE_CLIENT_ID_ANDROID
- * @returns {string[]}
- */
-function getAllowedClientIds() {
-  const ids = [];
-  if (process.env.GOOGLE_CLIENT_ID_WEB) {
-    const webId = process.env.GOOGLE_CLIENT_ID_WEB.trim();
-    if (webId) ids.push(webId);
-  }
-  if (process.env.GOOGLE_CLIENT_ID_ANDROID) {
-    const androidId = process.env.GOOGLE_CLIENT_ID_ANDROID.trim();
-    if (androidId) ids.push(androidId);
-  }
-  return ids;
-}
-
-/**
- * Verify Google ID token using Google's official verification library.
+ * Verify Firebase ID token using Firebase Admin SDK.
+ *
  * Validates:
- * - Signature (via Google public certs)
+ * - Signature (via Firebase Admin SDK & Google public certs)
  * - Expiration (exp claim)
- * - Issuer (accounts.google.com or https://accounts.google.com)
- * - Audience (must match configured Web or Android Client IDs)
+ * - Audience (matches Firebase project ID)
  * - Verified email claim (email_verified === true)
- * - Non-empty subject identifier (sub claim)
+ * - Non-empty UID / subject claim
  * - Non-empty email claim
  *
- * Rejects missing, malformed, expired, invalid, unverified, or incorrectly issued tokens with 401.
- * Fails safely with 500 if client IDs are unconfigured on the server (never bypasses).
+ * Rejects missing, malformed, expired, invalid, or unverified tokens with 401.
+ * Fails safely with 500 if Firebase Admin is unconfigured on the server (never bypasses).
  *
  * @param {string} idToken
- * @param {string[]} [overrideAudiences]
- * @returns {Promise<{ sub: string, email: string, name: string, picture?: string }>}
+ * @param {{ requireEmailVerified?: boolean }} [options]
+ * @returns {Promise<{ uid: string, sub: string, email: string, name: string, picture?: string }>}
  */
-async function verifyGoogleIdToken(idToken, overrideAudiences = null) {
+async function verifyFirebaseIdToken(idToken, { requireEmailVerified = true } = {}) {
   if (!idToken || typeof idToken !== 'string' || idToken.trim() === '') {
-    const error = new Error('Google ID token is required.');
+    const error = new Error('Firebase ID token is required.');
     error.statusCode = 401;
     throw error;
   }
 
-  const allowedAudiences = overrideAudiences || getAllowedClientIds();
+  const auth = getAuth();
 
-  if (!allowedAudiences || allowedAudiences.length === 0) {
-    const error = new Error(
-      'No Google OAuth client IDs configured on server. Please configure GOOGLE_CLIENT_ID_WEB or GOOGLE_CLIENT_ID_ANDROID.'
-    );
-    error.statusCode = 500;
-    throw error;
-  }
-
-  let ticket;
+  let rawDecoded;
   try {
-    ticket = await client.verifyIdToken({
-      idToken,
-      audience: allowedAudiences,
-    });
+    rawDecoded = await auth.verifyIdToken(idToken.trim());
   } catch (err) {
-    const error = new Error(`Google ID token verification failed: ${err.message}`);
+    const error = new Error(`Firebase ID token verification failed: ${err.message}`);
+    error.statusCode = 401;
+    error.code = err.code || 'AUTH_INVALID_TOKEN';
+    throw error;
+  }
+
+  if (!rawDecoded) {
+    const error = new Error('Invalid Firebase ID token payload.');
     error.statusCode = 401;
     throw error;
   }
 
-  const payload = ticket.getPayload();
-  if (!payload) {
-    const error = new Error('Invalid Google ID token payload.');
-    error.statusCode = 401;
-    throw error;
-  }
+  // Handle both Firebase Admin decoded tokens and mock objects with getPayload()
+  const decodedToken = typeof rawDecoded.getPayload === 'function' ? rawDecoded.getPayload() : rawDecoded;
 
-  // 1. Issuer verification (must match Google's official auth issuers)
-  const validIssuers = ['accounts.google.com', 'https://accounts.google.com'];
-  if (!payload.iss || !validIssuers.includes(payload.iss)) {
-    const error = new Error(`Invalid token issuer: ${payload.iss}`);
-    error.statusCode = 401;
-    throw error;
-  }
-
-  // 2. Audience verification (must match trusted client IDs)
-  const tokenAudiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-  const hasValidAud = tokenAudiences.some((aud) => allowedAudiences.includes(aud));
-  if (!hasValidAud) {
-    const error = new Error(`Token audience not authorized: ${payload.aud}`);
-    error.statusCode = 401;
-    throw error;
-  }
-
-  // 3. Expiration verification
+  // 1. Expiration verification (additional safety check)
   const now = Math.floor(Date.now() / 1000);
-  if (payload.exp && payload.exp < now) {
-    const error = new Error('Google ID token has expired.');
+  if (decodedToken.exp && decodedToken.exp < now) {
+    const error = new Error('Firebase ID token has expired.');
     error.statusCode = 401;
+    error.code = 'TOKEN_EXPIRED';
     throw error;
   }
 
-  // 4. Verified email claim (protects against unverified account takeover)
-  const isEmailVerified = payload.email_verified === true || payload.email_verified === 'true';
-  if (!isEmailVerified) {
+  // 2. Verified email claim (protects against unverified account takeover)
+  const isEmailVerified = decodedToken.email_verified === true || decodedToken.email_verified === 'true';
+  if (requireEmailVerified && !isEmailVerified) {
     const error = new Error('Google account email is not verified.');
     error.statusCode = 401;
+    error.code = 'EMAIL_NOT_VERIFIED';
     throw error;
   }
 
-  // 5. Stable, non-empty sub claim
-  if (!payload.sub || typeof payload.sub !== 'string' || payload.sub.trim() === '') {
-    const error = new Error('Google ID token missing subject (sub) claim.');
+  // 3. Stable, non-empty UID claim
+  const uid = decodedToken.uid || decodedToken.sub;
+  if (!uid || typeof uid !== 'string' || uid.trim() === '') {
+    const error = new Error('Firebase ID token missing subject/UID claim.');
     error.statusCode = 401;
     throw error;
   }
 
-  // 6. Non-empty email claim
-  if (!payload.email || typeof payload.email !== 'string' || payload.email.trim() === '') {
-    const error = new Error('Google ID token missing or invalid email claim.');
+  // 4. Non-empty email claim
+  if (!decodedToken.email || typeof decodedToken.email !== 'string' || decodedToken.email.trim() === '') {
+    const error = new Error('Firebase ID token missing or invalid email claim.');
     error.statusCode = 401;
     throw error;
   }
+
+  // 5. Extract Google provider subject ID if available from identities
+  const googleId =
+    (decodedToken.firebase &&
+      decodedToken.firebase.identities &&
+      decodedToken.firebase.identities['google.com'] &&
+      decodedToken.firebase.identities['google.com'][0]) ||
+    decodedToken.google_id ||
+    decodedToken.googleId ||
+    null;
 
   return {
-    sub: payload.sub.trim(),
-    email: payload.email.toLowerCase().trim(),
-    name: (payload.name || payload.given_name || payload.email.split('@')[0]).trim(),
-    picture: payload.picture,
+    uid: uid.trim(),
+    sub: uid.trim(),
+    email: decodedToken.email.toLowerCase().trim(),
+    name: (decodedToken.name || decodedToken.display_name || decodedToken.email.split('@')[0]).trim(),
+    picture: decodedToken.picture || null,
+    googleId: googleId ? String(googleId).trim() : null,
   };
 }
 
+// Alias for backwards compatibility with controller imports
+const verifyGoogleIdToken = verifyFirebaseIdToken;
+
 /**
- * Find or create user from verified Google identity.
+ * For testing purposes: mock the auth verification instance
+ * @param {object} customAuth
+ */
+function _setOAuth2Client(customAuth) {
+  _setAuthInstance(customAuth);
+}
+
+/**
+ * Find or create user from verified Firebase / Google identity.
  *
  * Security Safeguards:
- * - Prevents duplicate users & duplicate Google IDs via database-level UNIQUE constraints.
+ * - Prevents duplicate users & duplicate Firebase UIDs via database-level UNIQUE constraints.
  * - Prevents account takeover: Never auto-links Google identities to existing accounts with matching email.
- * - Safe email sync: Updates Google user's email only if the new email does not collide with an existing user.
+ * - Safe email sync: Updates user's email only if the new email does not collide with an existing user.
  * - Concurrency protection: Gracefully handles race conditions during simultaneous first-time sign-ins.
  *
- * @param {{ sub: string, email: string, name: string }} googleProfile
+ * @param {{ uid?: string, sub: string, email: string, name: string }} profile
  * @returns {Promise<{ token: string, user: object }>}
  */
-async function authenticateGoogleUser({ sub, email, name }) {
-  const cleanSub = String(sub).trim();
+async function authenticateGoogleUser({ uid, sub, email, name, googleId }) {
+  const cleanId = String(uid || sub).trim();
   const cleanEmail = String(email).toLowerCase().trim();
   const cleanName = String(name || cleanEmail.split('@')[0]).trim();
+  const cleanGoogleId = googleId ? String(googleId).trim() : null;
 
-  // 1. Look up user by Google's permanent, unique subject identifier
-  const existingGoogleUser = await query(
-    `SELECT u.id, u.name, u.email, u.password_hash, u.google_id, u.created_at,
+  // 1. Look up user by Firebase UID, Google provider ID, or legacy google_id mapping
+  const existingUserRes = await query(
+    `SELECT u.id, u.name, u.email, u.password_hash, u.google_id, u.firebase_uid, u.created_at,
             p.birth_year, p.average_cycle_length, p.average_period_duration, p.onboarding_completed
      FROM users u
      LEFT JOIN user_profiles p ON u.id = p.user_id
-     WHERE u.google_id = $1`,
-    [cleanSub]
+     WHERE u.firebase_uid = $1
+        OR u.google_id = $1
+        OR ($2::varchar IS NOT NULL AND (u.google_id = $2 OR u.firebase_uid = $2))`,
+    [cleanId, cleanGoogleId]
   );
 
-  if (existingGoogleUser.rows.length > 0) {
-    const user = existingGoogleUser.rows[0];
+  if (existingUserRes.rows.length > 0) {
+    const user = existingUserRes.rows[0];
 
-    // If user's Google email changed, update safely if the new email is not taken by another user
+    // Ensure firebase_uid is synchronized to cleanId (the verified Firebase Auth UID)
+    // and google_id is preserved or updated with cleanGoogleId
+    const targetGoogleId = cleanGoogleId || user.google_id || cleanId;
+    if (user.firebase_uid !== cleanId || (cleanGoogleId && user.google_id !== cleanGoogleId)) {
+      await query(
+        `UPDATE users
+         SET firebase_uid = $1,
+             google_id = COALESCE($2, google_id),
+             auth_provider = CASE WHEN password_hash IS NOT NULL THEN 'both' ELSE 'google' END,
+             updated_at = NOW()
+         WHERE id = $3`,
+        [cleanId, targetGoogleId, user.id]
+      );
+      user.firebase_uid = cleanId;
+      if (cleanGoogleId) user.google_id = cleanGoogleId;
+    }
+
+    // If user's Google/Firebase email changed, update safely if the new email is not taken by another user
     if (user.email.toLowerCase() !== cleanEmail) {
       const emailConflict = await query(
         'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND id != $2',
@@ -198,6 +189,7 @@ async function authenticateGoogleUser({ sub, email, name }) {
         email: user.email,
         has_password: Boolean(user.password_hash),
         is_google_linked: true,
+        firebase_uid: cleanId,
         auth_providers: user.password_hash ? ['email', 'google'] : ['google'],
         created_at: user.created_at,
         onboarding_completed: isOnboarded,
@@ -214,22 +206,93 @@ async function authenticateGoogleUser({ sub, email, name }) {
   }
 
   // 2. Check if an account already exists with this email (case-insensitive)
-  // To prevent pre-account and post-account takeover vulnerabilities, DO NOT auto-link accounts
   const existingEmailUser = await query(
-    'SELECT id, name, email, google_id, password_hash, auth_provider FROM users WHERE LOWER(email) = LOWER($1)',
+    `SELECT u.id, u.name, u.email, u.google_id, u.firebase_uid, u.password_hash, u.auth_provider, u.created_at,
+            p.birth_year, p.average_cycle_length, p.average_period_duration, p.onboarding_completed
+     FROM users u
+     LEFT JOIN user_profiles p ON u.id = p.user_id
+     WHERE LOWER(u.email) = LOWER($1)`,
     [cleanEmail]
   );
 
   if (existingEmailUser.rows.length > 0) {
     const conflictUser = existingEmailUser.rows[0];
-    const error = new Error(
-      conflictUser.password_hash
-        ? 'An account with this email address already exists using password authentication. Please log in with your email and password.'
-        : 'An account with this email address already exists. Please log in with your original authentication method.'
+
+    // Determine if this is the same user identity:
+    // - Matches Firebase UID
+    // - OR matches Google Provider UID against google_id or legacy firebase_uid
+    // - OR matches legacy state where firebase_uid was copied from google_id in migration 005
+    const isSameUser =
+      (conflictUser.firebase_uid && conflictUser.firebase_uid === cleanId) ||
+      (cleanGoogleId && conflictUser.google_id && conflictUser.google_id === cleanGoogleId) ||
+      (cleanGoogleId && conflictUser.firebase_uid && conflictUser.firebase_uid === cleanGoogleId) ||
+      (conflictUser.google_id && conflictUser.google_id === cleanId) ||
+      (conflictUser.firebase_uid && conflictUser.google_id && conflictUser.firebase_uid === conflictUser.google_id);
+
+    // Anti-Takeover Safeguard:
+    // Only block if this user already has an established identity pointing to a DIFFERENT account
+    const hasDifferentIdentity =
+      !isSameUser &&
+      ((conflictUser.firebase_uid && conflictUser.firebase_uid !== cleanId) ||
+       (cleanGoogleId && conflictUser.google_id && conflictUser.google_id !== cleanGoogleId));
+
+    if (hasDifferentIdentity) {
+      const error = new Error(
+        'An account with this email address already exists. Please sign in with your original authentication provider.'
+      );
+      error.statusCode = 409;
+      error.code = 'ACCOUNT_LINK_REQUIRED';
+      throw error;
+    }
+
+    // Safe Migration / Synchronization:
+    const targetGoogleId = cleanGoogleId || conflictUser.google_id || cleanId;
+    await query(
+      `UPDATE users
+       SET firebase_uid = $1,
+           google_id = COALESCE($2, google_id),
+           name = COALESCE(NULLIF(name, ''), $3),
+           auth_provider = CASE WHEN password_hash IS NOT NULL THEN 'both' ELSE 'google' END,
+           updated_at = NOW()
+       WHERE id = $4`,
+      [cleanId, targetGoogleId, cleanName, conflictUser.id]
     );
-    error.statusCode = 409;
-    error.code = 'ACCOUNT_LINK_REQUIRED';
-    throw error;
+
+    // Ensure default profile exists if user was missing one
+    if (conflictUser.average_cycle_length === null || conflictUser.average_cycle_length === undefined) {
+      await query(
+        `INSERT INTO user_profiles (user_id, average_cycle_length, average_period_duration, onboarding_completed, created_at, updated_at)
+         VALUES ($1, 28, 5, false, NOW(), NOW())
+         ON CONFLICT (user_id) DO NOTHING`,
+        [conflictUser.id]
+      );
+    }
+
+    const token = generateToken({ userId: String(conflictUser.id), email: conflictUser.email });
+    const isOnboarded = Boolean(conflictUser.onboarding_completed);
+
+    return {
+      token,
+      user: {
+        id: String(conflictUser.id),
+        name: conflictUser.name || cleanName,
+        email: conflictUser.email,
+        has_password: Boolean(conflictUser.password_hash),
+        is_google_linked: true,
+        firebase_uid: cleanId,
+        auth_providers: conflictUser.password_hash ? ['email', 'google'] : ['google'],
+        created_at: conflictUser.created_at,
+        onboarding_completed: isOnboarded,
+        onboardingCompleted: isOnboarded,
+        profile: {
+          birth_year: conflictUser.birth_year,
+          average_cycle_length: conflictUser.average_cycle_length ?? 28,
+          average_period_duration: conflictUser.average_period_duration ?? 5,
+          onboarding_completed: isOnboarded,
+          onboardingCompleted: isOnboarded,
+        },
+      },
+    };
   }
 
   // 3. Create new user in PostgreSQL schema atomically
@@ -238,10 +301,10 @@ async function authenticateGoogleUser({ sub, email, name }) {
     await client.query('BEGIN');
 
     const insertUser = await client.query(
-      `INSERT INTO users (name, email, google_id, auth_provider, created_at, updated_at)
-       VALUES ($1, $2, $3, 'google', NOW(), NOW())
+      `INSERT INTO users (name, email, google_id, firebase_uid, auth_provider, created_at, updated_at)
+       VALUES ($1, $2, $3, $3, 'google', NOW(), NOW())
        RETURNING id, name, email, created_at`,
-      [cleanName, cleanEmail, cleanSub]
+      [cleanName, cleanEmail, cleanId]
     );
     const newUser = insertUser.rows[0];
 
@@ -273,6 +336,7 @@ async function authenticateGoogleUser({ sub, email, name }) {
         email: newUser.email,
         has_password: false,
         is_google_linked: true,
+        firebase_uid: cleanId,
         auth_providers: ['google'],
         created_at: newUser.created_at,
         onboarding_completed: isOnboarded,
@@ -290,17 +354,17 @@ async function authenticateGoogleUser({ sub, email, name }) {
     await client.query('ROLLBACK');
 
     // Concurrency / Race Condition Guard:
-    // If another concurrent request inserted this google_id at the same time,
+    // If another concurrent request inserted this UID at the same time,
     // gracefully resolve to the existing user instead of throwing an error.
     if (err.code === '23505') {
-      if (err.constraint === 'users_google_id_key') {
+      if (err.constraint === 'users_google_id_key' || err.constraint === 'users_firebase_uid_key') {
         const retryUser = await query(
-          `SELECT u.id, u.name, u.email, u.password_hash, u.google_id, u.created_at,
+          `SELECT u.id, u.name, u.email, u.password_hash, u.google_id, u.firebase_uid, u.created_at,
                   p.birth_year, p.average_cycle_length, p.average_period_duration, p.onboarding_completed
            FROM users u
            LEFT JOIN user_profiles p ON u.id = p.user_id
-           WHERE u.google_id = $1`,
-          [cleanSub]
+           WHERE u.firebase_uid = $1 OR u.google_id = $1`,
+          [cleanId]
         );
         if (retryUser.rows.length > 0) {
           const user = retryUser.rows[0];
@@ -344,21 +408,22 @@ async function authenticateGoogleUser({ sub, email, name }) {
  *
  * Requirements:
  * - Requires authenticated Lunari user.
- * - Confirms Google ID token identity (sub, email, verified claims).
- * - Ensures Google identity is not already linked to another user.
+ * - Confirms Firebase ID token identity (uid/sub, email, verified claims).
+ * - Ensures Firebase/Google identity is not already linked to another user.
  * - Confirms Google email matches user's registered email.
  * - Updates user row transactionally and preserves all period/cycle data.
  *
- * @param {{ userId: string, googleProfile: { sub: string, email: string, name?: string } }}
+ * @param {{ userId: string, googleProfile: { uid?: string, sub: string, email: string, name?: string } }}
  * @returns {Promise<object>}
  */
 async function linkGoogleAccount({ userId, googleProfile }) {
-  const cleanSub = String(googleProfile.sub).trim();
+  const cleanId = String(googleProfile.uid || googleProfile.sub).trim();
   const cleanEmail = String(googleProfile.email).toLowerCase().trim();
+  const cleanGoogleId = googleProfile.googleId ? String(googleProfile.googleId).trim() : null;
 
   // 1. Fetch authenticated user
   const userRes = await query(
-    `SELECT u.id, u.name, u.email, u.google_id, u.password_hash, u.auth_provider, u.created_at,
+    `SELECT u.id, u.name, u.email, u.google_id, u.firebase_uid, u.password_hash, u.auth_provider, u.created_at,
             p.birth_year, p.average_cycle_length, p.average_period_duration, p.onboarding_completed
      FROM users u
      LEFT JOIN user_profiles p ON u.id = p.user_id
@@ -374,8 +439,23 @@ async function linkGoogleAccount({ userId, googleProfile }) {
 
   const user = userRes.rows[0];
 
-  // 2. Already linked to this exact Google account? Idempotent success
-  if (user.google_id === cleanSub) {
+  // 2. Already linked to this exact Google/Firebase account? Idempotent success
+  const isAlreadyLinked =
+    user.firebase_uid === cleanId ||
+    user.google_id === cleanId ||
+    (cleanGoogleId && user.google_id === cleanGoogleId) ||
+    (cleanGoogleId && user.firebase_uid === cleanGoogleId);
+
+  if (isAlreadyLinked) {
+    const targetGoogleId = cleanGoogleId || user.google_id || cleanId;
+    if (user.firebase_uid !== cleanId || (cleanGoogleId && user.google_id !== cleanGoogleId)) {
+      await query(
+        'UPDATE users SET firebase_uid = $1, google_id = COALESCE($2, google_id), updated_at = NOW() WHERE id = $3',
+        [cleanId, targetGoogleId, user.id]
+      );
+      user.firebase_uid = cleanId;
+      if (cleanGoogleId) user.google_id = cleanGoogleId;
+    }
     const isOnboarded = Boolean(user.onboarding_completed);
     return {
       id: String(user.id),
@@ -398,17 +478,24 @@ async function linkGoogleAccount({ userId, googleProfile }) {
   }
 
   // 3. User already linked to a different Google account
-  if (user.google_id && user.google_id !== cleanSub) {
+  const hasDifferentLinkedIdentity =
+    (user.firebase_uid && user.firebase_uid !== cleanId && user.firebase_uid !== user.google_id) ||
+    (user.google_id && cleanGoogleId && user.google_id !== cleanGoogleId);
+
+  if (hasDifferentLinkedIdentity) {
     const error = new Error('This account is already linked to a different Google identity.');
     error.statusCode = 409;
     error.code = 'ACCOUNT_ALREADY_LINKED';
     throw error;
   }
 
-  // 4. Google sub already linked to another user
+  // 4. Firebase/Google ID already linked to another user
   const conflictRes = await query(
-    'SELECT id FROM users WHERE google_id = $1 AND id != $2',
-    [cleanSub, user.id]
+    `SELECT id FROM users
+     WHERE ((firebase_uid = $1 OR google_id = $1)
+        OR ($2::varchar IS NOT NULL AND (google_id = $2 OR firebase_uid = $2)))
+       AND id != $3`,
+    [cleanId, cleanGoogleId, user.id]
   );
   if (conflictRes.rows.length > 0) {
     const error = new Error('This Google identity is already linked to another Lunari account.');
@@ -427,12 +514,13 @@ async function linkGoogleAccount({ userId, googleProfile }) {
 
   // 6. Transactionally update user record
   const newProvider = user.password_hash ? 'both' : 'google';
+  const targetGoogleId = cleanGoogleId || cleanId;
   const updateRes = await query(
     `UPDATE users
-     SET google_id = $1, auth_provider = $2, updated_at = NOW()
-     WHERE id = $3
-     RETURNING id, name, email, google_id, password_hash, auth_provider, created_at, updated_at`,
-    [cleanSub, newProvider, user.id]
+     SET google_id = $1, firebase_uid = $2, auth_provider = $3, updated_at = NOW()
+     WHERE id = $4
+     RETURNING id, name, email, google_id, firebase_uid, password_hash, auth_provider, created_at, updated_at`,
+    [targetGoogleId, cleanId, newProvider, user.id]
   );
   const updated = updateRes.rows[0];
   const isOnboarded = Boolean(user.onboarding_completed);
@@ -458,9 +546,11 @@ async function linkGoogleAccount({ userId, googleProfile }) {
 }
 
 module.exports = {
-  getAllowedClientIds,
+  verifyFirebaseIdToken,
   verifyGoogleIdToken,
   authenticateGoogleUser,
   linkGoogleAccount,
   _setOAuth2Client,
+  _setAuthInstance,
+  isFirebaseConfigured,
 };

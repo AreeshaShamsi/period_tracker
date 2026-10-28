@@ -10,6 +10,7 @@
     "test:api": "node test-api.js",
     "test:cors": "node test-cors.js",
     "test:google": "node test-google-auth.js",
+    "migrate:users": "node database/migrateExistingUsers.js",
     "test": "node src/config/database.js && node test-api.js && node test-cors.js && node test-google-auth.js"
   },
   "keywords": [
@@ -26,7 +27,7 @@
     "bcryptjs": "^3.0.3",
     "dotenv": "^18.0.7",
     "fastify": "^5.12.5",
-    "google-auth-library": "^11.3.1",
+    "firebase-admin": "^14.5.0",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.23.1",
     "zod": "3.23.8"

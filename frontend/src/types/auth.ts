@@ -5,11 +5,15 @@ export interface SignupRequest {
   birthYear?: number;
   averageCycleLength?: number;
   averagePeriodDuration?: number;
+  idToken?: string;
+  firebaseIdToken?: string;
 }
 
 export interface LoginRequest {
   email: string;
   password: string;
+  idToken?: string;
+  firebaseIdToken?: string;
 }
 
 export interface AuthUserProfile {
@@ -24,6 +28,7 @@ export interface AuthUser {
   id: string;
   name: string;
   email: string;
+  firebase_uid?: string | null;
   has_password?: boolean;
   is_google_linked?: boolean;
   auth_providers?: string[];

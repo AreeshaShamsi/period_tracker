@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import { isAxiosError } from "axios";
 import { api } from "./api";
 import {
@@ -47,6 +48,78 @@ export function getAuthErrorDetails(
 ): AuthErrorInfo {
   if (__DEV__) {
     console.warn("[auth.service] Caught authentication error:", error);
+  }
+
+  // 1. Firebase Authentication error codes (from Firebase Auth client SDK)
+  const errCode = (error as any)?.code;
+  const errMessage = (error as any)?.message || "";
+
+  if (errCode === "auth/email-already-in-use" || /email-already-in-use/i.test(errMessage)) {
+    return {
+      title: "Account Already Exists",
+      message: "An account with this email address already exists. Please sign in instead.",
+      code: "ACCOUNT_EXISTS",
+    };
+  }
+
+  if (errCode === "auth/user-not-found" || /user-not-found/i.test(errMessage)) {
+    return {
+      title: "Account Not Found",
+      message: "No account found with this email address. Please sign up first.",
+      code: "USER_NOT_FOUND",
+    };
+  }
+
+  if (
+    errCode === "auth/wrong-password" ||
+    errCode === "auth/invalid-credential" ||
+    /invalid-credential|wrong-password/i.test(errMessage)
+  ) {
+    return {
+      title: "Sign In Error",
+      message: "Your email or password is incorrect.",
+      code: "INVALID_CREDENTIALS",
+    };
+  }
+
+  if (errCode === "auth/weak-password" || /weak-password/i.test(errMessage)) {
+    return {
+      title: "Weak Password",
+      message: "Password is too weak. Please use at least 6 characters.",
+      code: "WEAK_PASSWORD",
+    };
+  }
+
+  if (errCode === "auth/invalid-email" || /invalid-email/i.test(errMessage)) {
+    return {
+      title: "Invalid Email",
+      message: "Please enter a valid email address.",
+      code: "INVALID_EMAIL",
+    };
+  }
+
+  if (errCode === "auth/too-many-requests" || /too-many-requests/i.test(errMessage)) {
+    return {
+      title: "Access Temporarily Disabled",
+      message: "Too many failed attempts. Please try again later or reset your password.",
+      code: "TOO_MANY_REQUESTS",
+    };
+  }
+
+  if (errCode === "auth/user-disabled" || /user-disabled/i.test(errMessage)) {
+    return {
+      title: "Account Disabled",
+      message: "This account has been disabled. Please contact support.",
+      code: "USER_DISABLED",
+    };
+  }
+
+  if (errCode === "auth/network-request-failed" || /network-request-failed/i.test(errMessage)) {
+    return {
+      title: "Connection Error",
+      message: "Unable to connect right now. Please check your internet connection and try again.",
+      code: "NETWORK_ERROR",
+    };
   }
 
   if (isAxiosError(error)) {
@@ -99,7 +172,9 @@ export function getAuthErrorDetails(
     if (status === 409 || code === "ACCOUNT_LINK_REQUIRED") {
       return {
         title: "Account Already Exists",
-        message: "This email is already registered with a password. Sign in to your existing account first, then link Google to use either sign-in method.",
+        message:
+          rawMessage ||
+          "An account with this email address already exists. Please sign in with your original authentication provider.",
         code: "ACCOUNT_LINK_REQUIRED",
       };
     }
@@ -130,6 +205,14 @@ export function getAuthErrorDetails(
     }
 
     // 6. Unknown / server error (500, etc.)
+    if (status && status >= 500) {
+      return {
+        title: "Server Notice",
+        message: "Something went wrong on the server. Please try again later.",
+        code: code || "SERVER_ERROR",
+      };
+    }
+
     return {
       title: "Notice",
       message: fallback,
@@ -162,25 +245,100 @@ export function getApiErrorMessage(
 
 /**
  * Register a new user account.
+ * Integrates with Firebase Authentication for email/password user creation,
+ * then creates corresponding PostgreSQL user record with verified Firebase UID.
  * Endpoint: POST /api/auth/signup
  */
 export async function signup(payload: SignupRequest): Promise<AuthResponse> {
-  const response = await api.post<AuthResponse>("/api/auth/signup", payload);
-  if (response.data.data?.token) {
-    await saveAuthToken(response.data.data.token);
+  let idToken: string | undefined;
+  let createdFirebaseUser: any = null;
+
+  try {
+    const { isFirebaseClientConfigured, getFirebaseAuth } = await import("@/config/firebase");
+    if (isFirebaseClientConfigured()) {
+      const { createUserWithEmailAndPassword, updateProfile } = await import("firebase/auth");
+      const auth = getFirebaseAuth();
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        payload.email.trim(),
+        payload.password
+      );
+      createdFirebaseUser = userCredential.user;
+
+      if (payload.name?.trim()) {
+        await updateProfile(userCredential.user, {
+          displayName: payload.name.trim(),
+        }).catch(() => {});
+      }
+
+      idToken = await userCredential.user.getIdToken();
+    }
+  } catch (fbError: any) {
+    if (fbError?.code?.startsWith("auth/")) {
+      throw fbError;
+    }
+    if (__DEV__) {
+      console.warn("[auth.service] Firebase signup client fallback:", fbError);
+    }
   }
-  if (response.data.data?.user) {
-    await saveAuthUser(response.data.data.user);
+
+  try {
+    const response = await api.post<AuthResponse>("/api/auth/signup", {
+      ...payload,
+      ...(idToken ? { idToken } : {}),
+    });
+
+    if (response.data.data?.token) {
+      await saveAuthToken(response.data.data.token);
+    }
+    if (response.data.data?.user) {
+      await saveAuthUser(response.data.data.user);
+    }
+    return response.data;
+  } catch (apiError) {
+    // If backend database insertion failed but Firebase user was created, roll back Firebase user
+    if (createdFirebaseUser && typeof createdFirebaseUser.delete === "function") {
+      await createdFirebaseUser.delete().catch(() => {});
+    }
+    throw apiError;
   }
-  return response.data;
 }
 
 /**
  * Authenticate existing user with email and password.
+ * Authenticates with Firebase Auth to obtain verified ID token,
+ * exchanging it with backend for Lunari session JWT.
  * Endpoint: POST /api/auth/login
  */
 export async function login(payload: LoginRequest): Promise<AuthResponse> {
-  const response = await api.post<AuthResponse>("/api/auth/login", payload);
+  let idToken: string | undefined;
+
+  try {
+    const { isFirebaseClientConfigured, getFirebaseAuth } = await import("@/config/firebase");
+    if (isFirebaseClientConfigured()) {
+      const { signInWithEmailAndPassword } = await import("firebase/auth");
+      const auth = getFirebaseAuth();
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
+        payload.email.trim(),
+        payload.password
+      );
+      idToken = await userCredential.user.getIdToken();
+    }
+  } catch (fbError: any) {
+    if (fbError?.code?.startsWith("auth/")) {
+      throw fbError;
+    }
+    if (__DEV__) {
+      console.warn("[auth.service] Firebase login client fallback:", fbError);
+    }
+  }
+
+  const response = await api.post<AuthResponse>("/api/auth/login", {
+    ...payload,
+    ...(idToken ? { idToken } : {}),
+  });
+
   if (response.data.data?.token) {
     await saveAuthToken(response.data.data.token);
   }
@@ -191,7 +349,21 @@ export async function login(payload: LoginRequest): Promise<AuthResponse> {
 }
 
 /**
+ * Send password reset email via Firebase Authentication.
+ */
+export async function forgotPassword(email: string): Promise<void> {
+  const normalizedEmail = email.trim();
+  const { isFirebaseClientConfigured, getFirebaseAuth } = await import("@/config/firebase");
+  if (isFirebaseClientConfigured()) {
+    const { sendPasswordResetEmail } = await import("firebase/auth");
+    const auth = getFirebaseAuth();
+    await sendPasswordResetEmail(auth, normalizedEmail);
+  }
+}
+
+/**
  * Invalidate current session and remove local auth state.
+ * Signs out from Lunari API, Firebase Auth, and GoogleSignin.
  * Endpoint: POST /api/auth/logout
  */
 export async function logout(): Promise<LogoutResponse> {
@@ -199,6 +371,30 @@ export async function logout(): Promise<LogoutResponse> {
     const response = await api.post<LogoutResponse>("/api/auth/logout");
     return response.data;
   } finally {
+    // 1. Sign out from Firebase Auth
+    try {
+      const { isFirebaseClientConfigured, getFirebaseAuth } = await import(
+        "@/config/firebase"
+      );
+      if (isFirebaseClientConfigured()) {
+        const { signOut } = await import("firebase/auth");
+        await signOut(getFirebaseAuth());
+      }
+    } catch {}
+
+    // 2. Sign out from GoogleSignin
+    if (Platform.OS !== "web") {
+      try {
+        const { GoogleSignin } = await import(
+          "@react-native-google-signin/google-signin"
+        );
+        if (GoogleSignin && typeof GoogleSignin.signOut === "function") {
+          await GoogleSignin.signOut();
+        }
+      } catch {}
+    }
+
+    // 3. Clear stored credentials and user data
     await clearAuthToken();
     await clearAuthUser();
   }
@@ -246,6 +442,7 @@ export async function linkGoogle(idToken: string): Promise<AuthResponse> {
 export const authService = {
   signup,
   login,
+  forgotPassword,
   googleLogin,
   linkGoogle,
   logout,

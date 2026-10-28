@@ -277,23 +277,20 @@ async function runRegressionSuite() {
       [googleUserId]
     );
 
-    // Mock Google OAuth verification
+    // Mock Google/Firebase Auth verification
     const mockClient = {
       async verifyIdToken() {
         return {
-          getPayload: () => ({
-            iss: 'https://accounts.google.com',
-            aud: process.env.GOOGLE_CLIENT_ID_WEB || 'test-web-client-id.apps.googleusercontent.com',
-            sub: existingGoogleSub,
-            email: existingGoogleEmail,
-            email_verified: true,
-            exp: Math.floor(Date.now() / 1000) + 3600,
-            name: 'Google Onboarded Tester',
-          }),
+          uid: existingGoogleSub,
+          sub: existingGoogleSub,
+          email: existingGoogleEmail,
+          email_verified: true,
+          exp: Math.floor(Date.now() / 1000) + 3600,
+          name: 'Google Onboarded Tester',
         };
       },
     };
-    googleAuthService._setOAuth2Client(mockClient);
+    googleAuthService._setAuthInstance(mockClient);
 
     const googleAuthRes = await app.inject({
       method: 'POST',

@@ -2,7 +2,12 @@ const { pool, query } = require('../config/database');
 const { hashPassword, comparePassword, generateToken, revokeToken } = require('../services/auth.service');
 const { AppError, mapDatabaseError } = require('../utils/error.utils');
 const { validateSignup, validateLogin } = require('../validators/auth.validator');
-const { verifyGoogleIdToken, authenticateGoogleUser, linkGoogleAccount } = require('../services/googleAuth.service');
+const {
+  verifyGoogleIdToken,
+  verifyFirebaseIdToken,
+  authenticateGoogleUser,
+  linkGoogleAccount,
+} = require('../services/googleAuth.service');
 
 /**
  * Register a new user with default profile in a single transaction
@@ -24,13 +29,40 @@ async function signup(request, reply) {
     birthYear,
     averageCycleLength,
     averagePeriodDuration,
+    idToken,
+    firebaseIdToken,
   } = validation.data;
 
   const normalizedEmail = email.trim().toLowerCase();
   const trimmedName = name.trim();
+  const tokenToVerify = idToken || firebaseIdToken;
 
-  // 2. Pre-check for duplicate email (case-insensitive)
-  const existing = await query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [normalizedEmail]);
+  let firebaseUid = null;
+  if (tokenToVerify) {
+    try {
+      const decoded = await verifyFirebaseIdToken(tokenToVerify, { requireEmailVerified: false });
+      if (decoded.email.toLowerCase() !== normalizedEmail) {
+        return reply.status(400).send({
+          status: 'error',
+          code: 'EMAIL_MISMATCH',
+          message: 'Firebase token email does not match signup email.',
+        });
+      }
+      firebaseUid = decoded.uid;
+    } catch (err) {
+      const statusCode = err.statusCode || 401;
+      return reply.status(statusCode).send({
+        status: 'error',
+        message: err.message || 'Firebase token verification failed.',
+      });
+    }
+  }
+
+  // 2. Pre-check for duplicate email or duplicate firebase_uid (case-insensitive)
+  const existing = await query(
+    'SELECT id FROM users WHERE LOWER(email) = LOWER($1) OR ($2::varchar IS NOT NULL AND firebase_uid = $2)',
+    [normalizedEmail, firebaseUid]
+  );
   if (existing.rows.length > 0) {
     return reply.status(409).send({
       status: 'error',
@@ -38,8 +70,8 @@ async function signup(request, reply) {
     });
   }
 
-  // 3. Hash password
-  const hashedPassword = await hashPassword(password);
+  // 3. Hash password (if provided)
+  const hashedPassword = password ? await hashPassword(password) : null;
 
   // 4. Execute atomic transaction (users + user_profiles)
   const client = await pool.connect();
@@ -47,10 +79,10 @@ async function signup(request, reply) {
     await client.query('BEGIN');
 
     const userResult = await client.query(
-      `INSERT INTO users (name, email, password_hash)
-       VALUES ($1, $2, $3)
-       RETURNING id, name, email, created_at, updated_at`,
-      [trimmedName, normalizedEmail, hashedPassword]
+      `INSERT INTO users (name, email, password_hash, firebase_uid, auth_provider)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, name, email, firebase_uid, created_at, updated_at`,
+      [trimmedName, normalizedEmail, hashedPassword, firebaseUid, firebaseUid ? 'firebase' : 'email']
     );
 
     const newUser = userResult.rows[0];
@@ -88,8 +120,9 @@ async function signup(request, reply) {
           id: String(newUser.id),
           name: newUser.name,
           email: newUser.email,
-          has_password: true,
+          has_password: Boolean(hashedPassword),
           is_google_linked: false,
+          firebase_uid: newUser.firebase_uid || null,
           auth_providers: ['email'],
           created_at: newUser.created_at,
           onboarding_completed: isOnboarded,
@@ -109,6 +142,7 @@ async function signup(request, reply) {
     request.log.error(err, '[auth.controller] Signup transaction failed');
     const mapped = mapDatabaseError(err, {
       users_email_key: 'An account with this email address already exists.',
+      users_firebase_uid_key: 'An account with this email address already exists.',
     });
     return reply.status(mapped.statusCode).send({
       status: 'error',
@@ -120,7 +154,7 @@ async function signup(request, reply) {
 }
 
 /**
- * Authenticate user with email and password
+ * Authenticate user with email and password or verified Firebase ID token
  */
 async function login(request, reply) {
   // 1. Zod Schema Validation
@@ -132,20 +166,98 @@ async function login(request, reply) {
     });
   }
 
-  const { email, password } = validation.data;
+  const { email, password, idToken, firebaseIdToken } = validation.data;
   const normalizedEmail = email.trim().toLowerCase();
+  const tokenToVerify = idToken || firebaseIdToken;
 
   try {
+    let firebaseUid = null;
+    if (tokenToVerify) {
+      try {
+        const decoded = await verifyFirebaseIdToken(tokenToVerify, { requireEmailVerified: false });
+        if (decoded.email.toLowerCase() !== normalizedEmail) {
+          return reply.status(401).send({
+            status: 'error',
+            message: 'Invalid email or password.',
+          });
+        }
+        firebaseUid = decoded.uid;
+      } catch (err) {
+        return reply.status(401).send({
+          status: 'error',
+          message: 'Invalid email or password.',
+        });
+      }
+    }
+
     const userResult = await query(
-      `SELECT u.id, u.name, u.email, u.password_hash, u.google_id, u.created_at,
+      `SELECT u.id, u.name, u.email, u.password_hash, u.google_id, u.firebase_uid, u.created_at,
               p.birth_year, p.average_cycle_length, p.average_period_duration, p.onboarding_completed
        FROM users u
        LEFT JOIN user_profiles p ON u.id = p.user_id
-       WHERE u.email = $1`,
-      [normalizedEmail]
+       WHERE (u.firebase_uid IS NOT NULL AND u.firebase_uid = $1) OR LOWER(u.email) = LOWER($2)`,
+      [firebaseUid, normalizedEmail]
     );
 
     if (userResult.rows.length === 0) {
+      // First-time Firebase user logging in: safely create application user and default profile
+      if (tokenToVerify && firebaseUid) {
+        const client = await pool.connect();
+        let newUser;
+        let newProfile;
+        try {
+          await client.query('BEGIN');
+          const insertUser = await client.query(
+            `INSERT INTO users (name, email, firebase_uid, auth_provider, created_at, updated_at)
+             VALUES ($1, $2, $3, 'firebase', NOW(), NOW())
+             RETURNING id, name, email, firebase_uid, created_at`,
+            [normalizedEmail.split('@')[0], normalizedEmail, firebaseUid]
+          );
+          newUser = insertUser.rows[0];
+          const insertProfile = await client.query(
+            `INSERT INTO user_profiles (user_id, average_cycle_length, average_period_duration, onboarding_completed, created_at, updated_at)
+             VALUES ($1, 28, 5, FALSE, NOW(), NOW())
+             RETURNING birth_year, average_cycle_length, average_period_duration, onboarding_completed`,
+            [newUser.id]
+          );
+          newProfile = insertProfile.rows[0];
+          await client.query('COMMIT');
+        } catch (err) {
+          await client.query('ROLLBACK');
+          throw err;
+        } finally {
+          client.release();
+        }
+
+        const token = generateToken({ userId: String(newUser.id), email: newUser.email });
+        return reply.status(200).send({
+          status: 'success',
+          message: 'Login successful.',
+          data: {
+            token,
+            user: {
+              id: String(newUser.id),
+              name: newUser.name,
+              email: newUser.email,
+              has_password: false,
+              is_google_linked: false,
+              firebase_uid: newUser.firebase_uid,
+              auth_providers: ['email'],
+              created_at: newUser.created_at,
+              onboarding_completed: false,
+              onboardingCompleted: false,
+              profile: {
+                birth_year: newProfile.birth_year,
+                average_cycle_length: newProfile.average_cycle_length,
+                average_period_duration: newProfile.average_period_duration,
+                onboarding_completed: false,
+                onboardingCompleted: false,
+              },
+            },
+          },
+        });
+      }
+
       return reply.status(401).send({
         status: 'error',
         message: 'Invalid email or password.',
@@ -154,7 +266,8 @@ async function login(request, reply) {
 
     const user = userResult.rows[0];
 
-    if (!user.password_hash) {
+    // If client logged in without an idToken and the user only has Google Sign-In
+    if (!tokenToVerify && !user.password_hash) {
       return reply.status(400).send({
         status: 'error',
         code: 'GOOGLE_SIGN_IN_REQUIRED',
@@ -162,17 +275,32 @@ async function login(request, reply) {
       });
     }
 
-    const passwordMatch = await comparePassword(password, user.password_hash);
-
-    if (!passwordMatch) {
-      return reply.status(401).send({
-        status: 'error',
-        message: 'Invalid email or password.',
-      });
+    // If client logged in without an idToken, check password hash
+    if (!tokenToVerify) {
+      const passwordMatch = await comparePassword(password, user.password_hash);
+      if (!passwordMatch) {
+        return reply.status(401).send({
+          status: 'error',
+          message: 'Invalid email or password.',
+        });
+      }
+    } else {
+      // If client logged in with a verified Firebase idToken:
+      // Synchronize firebase_uid if not yet set
+      if (firebaseUid && !user.firebase_uid) {
+        await query('UPDATE users SET firebase_uid = $1 WHERE id = $2', [firebaseUid, user.id]);
+        user.firebase_uid = firebaseUid;
+      }
     }
 
     const token = generateToken({ userId: String(user.id), email: user.email });
     const isOnboarded = Boolean(user.onboarding_completed);
+
+    const hasPassword = Boolean(user.password_hash);
+    const isGoogleLinked = Boolean(user.google_id);
+    const authProviders = [];
+    if (hasPassword || user.firebase_uid) authProviders.push('email');
+    if (isGoogleLinked) authProviders.push('google');
 
     return reply.status(200).send({
       status: 'success',
@@ -183,9 +311,10 @@ async function login(request, reply) {
           id: String(user.id),
           name: user.name,
           email: user.email,
-          has_password: true,
-          is_google_linked: Boolean(user.google_id),
-          auth_providers: user.google_id ? ['email', 'google'] : ['email'],
+          has_password: hasPassword,
+          is_google_linked: isGoogleLinked,
+          firebase_uid: user.firebase_uid || null,
+          auth_providers: authProviders.length > 0 ? authProviders : ['email'],
           created_at: user.created_at,
           onboarding_completed: isOnboarded,
           onboardingCompleted: isOnboarded,
@@ -228,7 +357,7 @@ async function logout(request, reply) {
 async function me(request, reply) {
   try {
     const result = await query(
-      `SELECT u.id, u.name, u.email, u.password_hash, u.google_id, u.created_at, u.updated_at,
+      `SELECT u.id, u.name, u.email, u.password_hash, u.google_id, u.firebase_uid, u.created_at, u.updated_at,
               p.birth_year, p.average_cycle_length, p.average_period_duration, p.onboarding_completed
        FROM users u
        LEFT JOIN user_profiles p ON u.id = p.user_id
@@ -247,7 +376,7 @@ async function me(request, reply) {
     const hasPassword = Boolean(user.password_hash);
     const isGoogleLinked = Boolean(user.google_id);
     const authProviders = [];
-    if (hasPassword) authProviders.push('email');
+    if (hasPassword || user.firebase_uid) authProviders.push('email');
     if (isGoogleLinked) authProviders.push('google');
 
     const isOnboarded = Boolean(user.onboarding_completed);
@@ -261,7 +390,8 @@ async function me(request, reply) {
           email: user.email,
           has_password: hasPassword,
           is_google_linked: isGoogleLinked,
-          auth_providers: authProviders,
+          firebase_uid: user.firebase_uid || null,
+          auth_providers: authProviders.length > 0 ? authProviders : ['email'],
           created_at: user.created_at,
           updated_at: user.updated_at,
           onboarding_completed: isOnboarded,
@@ -286,16 +416,16 @@ async function me(request, reply) {
 }
 
 /**
- * Authenticate user with Google ID token
+ * Authenticate user with Firebase / Google ID token
  */
 async function google(request, reply) {
-  const { idToken, token } = request.body || {};
-  const tokenToVerify = idToken || token;
+  const { idToken, token, firebaseIdToken } = request.body || {};
+  const tokenToVerify = idToken || firebaseIdToken || token;
 
   if (!tokenToVerify || typeof tokenToVerify !== 'string' || tokenToVerify.trim() === '') {
     return reply.status(401).send({
       status: 'error',
-      message: 'Google ID token is required.',
+      message: 'Firebase ID token is required.',
     });
   }
 
@@ -310,7 +440,7 @@ async function google(request, reply) {
     });
   } catch (err) {
     const statusCode = err.statusCode || 500;
-    const message = err.message || 'Google authentication failed.';
+    const message = err.message || 'Firebase authentication failed.';
     request.log.error(err, '[auth.controller] Google auth failure');
     return reply.status(statusCode).send({
       status: 'error',
@@ -324,13 +454,13 @@ async function google(request, reply) {
  * Securely link Google identity to existing authenticated user account
  */
 async function linkGoogle(request, reply) {
-  const { idToken, token } = request.body || {};
-  const tokenToVerify = idToken || token;
+  const { idToken, token, firebaseIdToken } = request.body || {};
+  const tokenToVerify = idToken || firebaseIdToken || token;
 
   if (!tokenToVerify || typeof tokenToVerify !== 'string' || tokenToVerify.trim() === '') {
     return reply.status(400).send({
       status: 'error',
-      message: 'Google ID token is required.',
+      message: 'Firebase ID token is required.',
     });
   }
 

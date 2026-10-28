@@ -16,7 +16,24 @@ export const api: AxiosInstance = create({
 
 api.interceptors.request.use(
   async (config) => {
-    const token = await getAuthToken();
+    let token = await getAuthToken();
+
+    // 1. If Firebase client is configured and has an active user, obtain current Firebase ID token
+    try {
+      const { isFirebaseClientConfigured, getFirebaseAuth } = await import("@/config/firebase");
+      if (isFirebaseClientConfigured()) {
+        const auth = getFirebaseAuth();
+        if (auth?.currentUser) {
+          const firebaseIdToken = await auth.currentUser.getIdToken();
+          if (firebaseIdToken) {
+            token = firebaseIdToken;
+          }
+        }
+      }
+    } catch {
+      // Fallback silently to stored session token
+    }
+
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
