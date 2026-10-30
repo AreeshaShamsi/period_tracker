@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "e643f53e-2612-49a5-b9d6-6a79d1c9afca"
+      }
+    },
+    "android": {
+      "package": "com.balaji_ro.backend"
+    }
+  }
+}

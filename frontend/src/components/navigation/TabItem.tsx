@@ -21,9 +21,9 @@ interface TabConfigItem {
 const TAB_CONFIG: Record<string, TabConfigItem> = {
   index: { label: "Home", Icon: HomeTabIcon },
   calendar: { label: "Calendar", Icon: CalendarTabIcon },
-  analytics: { label: "Analytics", Icon: AnalyticsTabIcon },
-  "ai-chat": { label: "AI Chat", Icon: AIChatTabIcon },
-  profile: { label: "Profile", Icon: ProfileTabIcon },
+  analytics: { label: "Tracker", Icon: AnalyticsTabIcon },
+  "ai-chat": { label: "Articles", Icon: AIChatTabIcon },
+  profile: { label: "Account", Icon: ProfileTabIcon },
 };
 
 export interface TabItemProps {

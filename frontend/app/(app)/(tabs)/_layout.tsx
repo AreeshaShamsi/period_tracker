@@ -13,9 +13,9 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="index" options={{ title: "Home" }} />
       <Tabs.Screen name="calendar" options={{ title: "Calendar" }} />
-      <Tabs.Screen name="analytics" options={{ title: "Analytic" }} />
-      <Tabs.Screen name="ai-chat" options={{ title: "AI Chat" }} />
-      <Tabs.Screen name="profile" options={{ title: "Profile" }} />
+      <Tabs.Screen name="analytics" options={{ title: "Tracker" }} />
+      <Tabs.Screen name="ai-chat" options={{ title: "Articles" }} />
+      <Tabs.Screen name="profile" options={{ title: "Account" }} />
     </Tabs>
   );
 }

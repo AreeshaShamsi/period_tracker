@@ -95,8 +95,8 @@ const baseColors = {
   },
 
   nav: {
-    active: '#FF5C8A',
-    inactive: '#8E8E93',
+    active: '#F45B91',
+    inactive: '#B8B8B8',
   },
 
   recommendation: {
@@ -104,6 +104,42 @@ const baseColors = {
     tileBackground: '#FFF8FB',
     tileBorder: '#F8D9E4',
     cardPressedBorder: 'rgba(255, 92, 138, 0.35)',
+  },
+
+  calendar: {
+    screenBg: '#FFFFFF',
+    textMain: '#202124',
+    textSecondary: '#777777',
+    primaryPink: '#F45B91',
+    periodFill: '#F9A0BC',
+    periodBandPink: '#F9A0BC',
+    periodPalePink: '#FCE3EB',
+    periodText: '#FFFFFF',
+    predictedFill: '#FCE3EB',
+    predictedBorder: '#F9A0BC',
+    predictedText: '#F45B91',
+    fertileAccent: '#FFA62B',
+    fertileBg: '#FFF3E0',
+    fertileText: '#F28C28',
+    fertileDot: '#F28C28',
+    fertileIndicator: '#F28C28',
+    symptomIndicator: '#43B987',
+    symptomDot: '#43B987',
+    selectedOutline: '#F05B91',
+    selectedBorder: '#F05B91',
+    todayBorder: '#202124',
+    separator: '#EEEEEE',
+    outsideMonthText: '#B8B8B8',
+    inactiveNav: '#B8B8B8',
+  },
+
+  fertility: {
+    highBg: '#F45B91',
+    highText: '#FFFFFF',
+    mediumBg: '#FFA62B',
+    mediumText: '#FFFFFF',
+    lowBg: '#EEEEEE',
+    lowText: '#777777',
   },
 };
 

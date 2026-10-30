@@ -79,6 +79,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 16,
     right: 16,
+    ...(Platform.OS === "web" ? { maxWidth: 448, marginHorizontal: "auto" as any } : {}),
     height: TAB_BAR_HEIGHT,
     borderRadius: radius.tabBarFloating,
     overflow: "hidden",

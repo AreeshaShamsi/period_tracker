@@ -6,8 +6,6 @@ import React, {
   useReducer,
   useState,
 } from "react";
-import { View } from "react-native";
-import { colors } from "@/theme/colors";
 import { OnboardingData, UserLogs } from "@/types/onboarding";
 import {
   loadLogs,
@@ -42,7 +40,14 @@ type Action =
   | { type: "SET_FIELD"; field: keyof OnboardingData; value: any }
   | { type: "SET_ONBOARDING_DATA"; data: OnboardingData }
   | { type: "SET_USER_LOGS"; logs: UserLogs }
-  | { type: "TOGGLE_PERIOD_LOG"; dateStr: string };
+  | { type: "TOGGLE_PERIOD_LOG"; dateStr: string }
+  | {
+      type: "UPDATE_DATE_LOG";
+      dateStr: string;
+      isPeriod: boolean;
+      symptoms: string[];
+      notes?: string;
+    };
 
 interface State {
   onboardingData: OnboardingData;
@@ -85,6 +90,38 @@ function reducer(state: State, action: Action): State {
         userLogs: newLogs,
       };
     }
+    case "UPDATE_DATE_LOG": {
+      const exists = state.userLogs.periodDays.includes(action.dateStr);
+      let newPeriodDays = [...state.userLogs.periodDays];
+      if (action.isPeriod && !exists) {
+        newPeriodDays.push(action.dateStr);
+        newPeriodDays.sort();
+      } else if (!action.isPeriod && exists) {
+        newPeriodDays = newPeriodDays.filter((d) => d !== action.dateStr);
+      }
+
+      const newSymptoms = {
+        ...state.userLogs.symptoms,
+        [action.dateStr]: action.symptoms,
+      };
+
+      const newNotes = { ...state.userLogs.notes };
+      if (action.notes !== undefined) {
+        newNotes[action.dateStr] = action.notes;
+      }
+
+      const newLogs: UserLogs = {
+        ...state.userLogs,
+        periodDays: newPeriodDays,
+        symptoms: newSymptoms,
+        notes: newNotes,
+      };
+      saveLogs(newLogs);
+      return {
+        ...state,
+        userLogs: newLogs,
+      };
+    }
     default:
       return state;
   }
@@ -101,6 +138,12 @@ interface OnboardingContextType {
   ) => void;
   setOnboardingData: (data: OnboardingData) => Promise<void>;
   togglePeriodLog: (dateStr: string) => void;
+  updateDateLog: (
+    dateStr: string,
+    isPeriod: boolean,
+    symptoms: string[],
+    notes?: string
+  ) => void;
   syncWithServer: (user?: AuthUser) => Promise<{
     user: AuthUser;
     onboardingCompleted: boolean;
@@ -160,6 +203,21 @@ export const OnboardingProvider: React.FC<{ children: React.ReactNode }> = ({
     dispatch({ type: "TOGGLE_PERIOD_LOG", dateStr });
   };
 
+  const updateDateLog = (
+    dateStr: string,
+    isPeriod: boolean,
+    symptoms: string[],
+    notes?: string
+  ) => {
+    dispatch({
+      type: "UPDATE_DATE_LOG",
+      dateStr,
+      isPeriod,
+      symptoms,
+      notes,
+    });
+  };
+
   const syncWithServer = useCallback(async (user?: AuthUser) => {
     try {
       const result = await profileService.syncUserData(user);
@@ -178,10 +236,6 @@ export const OnboardingProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, []);
 
-  if (!isLoaded) {
-    return <View style={{ flex: 1, backgroundColor: colors.white }} />;
-  }
-
   return (
     <OnboardingContext.Provider
       value={{
@@ -192,6 +246,7 @@ export const OnboardingProvider: React.FC<{ children: React.ReactNode }> = ({
         setField,
         setOnboardingData,
         togglePeriodLog,
+        updateDateLog,
         syncWithServer,
       }}
     >

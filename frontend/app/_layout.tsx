@@ -1,5 +1,6 @@
 import "../global.css";
 import React, { useEffect } from "react";
+import { Platform } from "react-native";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useFonts } from "expo-font";
@@ -10,7 +11,7 @@ import { Poppins_700Bold } from "@expo-google-fonts/poppins/700Bold";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { OnboardingProvider } from "../src/state/OnboardingContext";
 
-SplashScreen.preventAutoHideAsync();
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
@@ -22,11 +23,11 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (loaded || error) {
-      SplashScreen.hideAsync();
+      SplashScreen.hideAsync().catch(() => {});
     }
   }, [loaded, error]);
 
-  if (!loaded && !error) {
+  if (Platform.OS !== "web" && !loaded && !error) {
     return null;
   }
 
@@ -35,6 +36,8 @@ export default function RootLayout() {
       <OnboardingProvider>
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="index" />
+          <Stack.Screen name="(app)" />
+          <Stack.Screen name="(auth)" />
         </Stack>
       </OnboardingProvider>
     </SafeAreaProvider>
